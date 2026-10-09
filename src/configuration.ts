@@ -24,7 +24,7 @@ export class MenuConfigurationError extends Error {
   }
 }
 
-function normalizePrivateMenu(value: unknown): PrivateMenuConfiguration {
+export function normalizePrivateMenu(value: unknown): PrivateMenuConfiguration {
   if (value === undefined || value === null) return emptyPrivateMenu()
   if (!isRecord(value)) {
     throw new MenuConfigurationError('privateMenu', 'privateMenu 必须是对象。')

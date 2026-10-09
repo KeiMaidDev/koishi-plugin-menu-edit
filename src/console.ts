@@ -14,6 +14,10 @@ import type {
   BotInstanceSummary,
   DiscardDraftInput,
   DraftMutationResult,
+  ImportPrivateMenuInput,
+  ImportPrivateMenuResult,
+  PrivateMenuPublishInput,
+  PrivateMenuPublishResult,
   SaveDraftInput,
   WorkspaceSnapshot,
 } from './types'
@@ -24,6 +28,8 @@ declare module '@koishijs/console' {
     'menu-edit/workspace'(appId: string): Promise<WorkspaceSnapshot>
     'menu-edit/save-draft'(input: SaveDraftInput): Promise<DraftMutationResult>
     'menu-edit/discard-draft'(input: DiscardDraftInput): Promise<DraftMutationResult>
+    'menu-edit/import-private-menu'(input: ImportPrivateMenuInput): Promise<ImportPrivateMenuResult>
+    'menu-edit/publish-private-menu'(input: PrivateMenuPublishInput): Promise<PrivateMenuPublishResult>
   }
 }
 
@@ -92,6 +98,12 @@ export const setupConsole = Object.assign(
 
     ctx.console.addListener(`${CONSOLE_API_PREFIX}/discard-draft`, (input) =>
       run('Discard Draft', () => service.discardDraft(input as DiscardDraftInput)), requireAuthority)
+
+    ctx.console.addListener(`${CONSOLE_API_PREFIX}/import-private-menu`, (input) =>
+      run('导入 Private Menu', () => service.importPrivateMenu(input as ImportPrivateMenuInput)), requireAuthority)
+
+    ctx.console.addListener(`${CONSOLE_API_PREFIX}/publish-private-menu`, (input) =>
+      run('Publish Private Menu', () => service.publishPrivateMenu(input as PrivateMenuPublishInput)), requireAuthority)
 
     ctx.console.addEntry(resolveConsoleEntry(ctx))
   },

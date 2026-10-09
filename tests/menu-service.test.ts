@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
 import { MenuServiceError } from '../src/menu-service'
+import { MenuPlatformError } from '../src/platform'
 import {
   emptyPanelConfiguration,
   type PanelConfiguration,
@@ -243,3 +244,192 @@ describe('MenuService：多 AppID 隔离', () => {
 })
 
 
+
+
+describe('MenuService：导入 Private Menu', () => {
+  it('导入成功后写入 Draft 与 importedConfiguration，并递增 revision', async () => {
+    const instance = harness()
+    instance.platform.seed('100', {
+      items: [{ name: '帮助', type: 'send_message', send_message: '/help' }],
+      futureField: { keep: true },
+    }, 7)
+
+    const result = await instance.service.importPrivateMenu({ appId: '100' })
+    assert.ok(result.ok)
+    if (!result.ok) return
+    assert.equal(result.revision, 1)
+    assert.equal(result.importedAt.length > 0, true)
+
+    const snapshot = await instance.service.loadWorkspace('100')
+    assert.equal(snapshot.revision, 1)
+    assert.deepEqual(snapshot.draft.privateMenu, {
+      items: [{ name: '帮助', type: 'send_message', send_message: '/help' }],
+      futureField: { keep: true },
+    })
+    assert.deepEqual(snapshot.importedConfiguration?.privateMenu, snapshot.draft.privateMenu)
+    // 导入内容成为 Discard 的恢复点
+    await expectSaved(await instance.service.saveDraft({
+      appId: '100',
+      expectedRevision: 1,
+      configuration: configuration({ privateMenu: { items: [{ name: '草稿' }] } }),
+    }))
+    const discarded = await instance.service.discardDraft({ appId: '100', expectedRevision: 2 })
+    assert.ok(discarded.ok)
+    assert.deepEqual((await instance.service.loadWorkspace('100')).draft.privateMenu, snapshot.draft.privateMenu)
+  })
+
+  it('平台读取失败时返回错误，且不写入任何状态、不以空配置覆盖 Draft', async () => {
+    const instance = harness()
+    instance.platform.getError = new MenuPlatformError('platform-error', '读取失败')
+
+    const result = await instance.service.importPrivateMenu({ appId: '100' })
+    assert.equal(result.ok, false)
+    if (result.ok) return
+    assert.equal(result.code, 'platform-error')
+    assert.equal(await instance.store.read('100'), null)
+  })
+
+  it('离线机器人返回 bot-offline，不读取平台也不写状态', async () => {
+    const instance = harness()
+    const result = await instance.service.importPrivateMenu({ appId: '200' })
+    assert.equal(result.ok, false)
+    if (result.ok) return
+    assert.equal(result.code, 'bot-offline')
+    assert.equal(instance.platform.setCalls.length, 0)
+    assert.equal(await instance.store.read('200'), null)
+  })
+
+  it('两个 AppID 导入的平台内容互不串扰', async () => {
+    const instance = harness([
+      { platform: 'qq', selfId: '100', config: { id: '100' }, isActive: true, user: { name: '一号机' } },
+      { platform: 'qq', selfId: '200', config: { id: '200' }, isActive: true, user: { name: '二号机' } },
+    ])
+    instance.platform.seed('100', { items: [{ name: 'A', type: 'send_message', send_message: '/a' }] })
+    instance.platform.seed('200', { items: [{ name: 'B', type: 'send_message', send_message: '/b' }] })
+
+    await instance.service.importPrivateMenu({ appId: '100' })
+    await instance.service.importPrivateMenu({ appId: '200' })
+
+    assert.deepEqual((await instance.service.loadWorkspace('100')).draft.privateMenu.items, [{ name: 'A', type: 'send_message', send_message: '/a' }])
+    assert.deepEqual((await instance.service.loadWorkspace('200')).draft.privateMenu.items, [{ name: 'B', type: 'send_message', send_message: '/b' }])
+  })
+})
+
+describe('MenuService：Publish Private Menu', () => {
+  it('整体覆盖写入平台，成功更新 Published Revision 并递增 revision', async () => {
+    const instance = harness()
+    const draft = configuration({
+      privateMenu: { items: [{ name: '帮助', type: 'send_message', send_message: '/help' }] },
+    })
+    await expectSaved(await instance.service.saveDraft({ appId: '100', expectedRevision: 0, configuration: draft }))
+
+    const result = await instance.service.publishPrivateMenu({ appId: '100', expectedRevision: 1 })
+    assert.ok(result.ok)
+    if (!result.ok) return
+    assert.equal(result.revision, 2)
+    assert.equal(result.published.version, 1)
+    assert.deepEqual(instance.platform.setCalls, [{ appId: '100', menu: draft.privateMenu }])
+
+    const snapshot = await instance.service.loadWorkspace('100')
+    assert.equal(snapshot.revision, 2)
+    assert.deepEqual(snapshot.published.privateMenu?.menu, draft.privateMenu)
+    assert.deepEqual(snapshot.draft.privateMenu, draft.privateMenu)
+  })
+
+  it('硬错误阻止发布，保留 Draft 与旧 Published Revision', async () => {
+    const instance = harness()
+    const items = Array.from({ length: 11 }, (_, index) => ({ name: `项${index}`, type: 'send_message', send_message: '/x' }))
+    await expectSaved(await instance.service.saveDraft({
+      appId: '100',
+      expectedRevision: 0,
+      configuration: configuration({ privateMenu: { items } }),
+    }))
+
+    const result = await instance.service.publishPrivateMenu({ appId: '100', expectedRevision: 1 })
+    assert.equal(result.ok, false)
+    if (result.ok) return
+    assert.equal(result.code, 'validation-failed')
+    assert.ok(result.errors.some(issue => issue.code === 'private-menu.items.max'))
+    assert.equal(instance.platform.setCalls.length, 0)
+
+    const snapshot = await instance.service.loadWorkspace('100')
+    assert.equal(snapshot.revision, 1)
+    assert.deepEqual(snapshot.draft.privateMenu.items, items)
+    assert.equal(snapshot.published.privateMenu, null)
+  })
+
+  it('平台写入失败时保留 Draft 与旧 Published Revision', async () => {
+    const instance = harness()
+    const oldMenu = { items: [{ name: '旧', type: 'send_message', send_message: '/old' }] }
+    const draftMenu = { items: [{ name: '新', type: 'send_message', send_message: '/new' }] }
+    await instance.store.write('100', makeState('100', {
+      revision: 5,
+      draft: configuration({ privateMenu: draftMenu }),
+      published: {
+        privateMenu: { menu: oldMenu, version: 9, publishedAt: '2026-10-10T00:00:00.000Z' },
+        groupPanel: null,
+      },
+    }))
+    instance.platform.setError = new MenuPlatformError('platform-error', '写入失败')
+
+    const result = await instance.service.publishPrivateMenu({ appId: '100', expectedRevision: 5 })
+    assert.equal(result.ok, false)
+    if (result.ok) return
+    assert.equal(result.code, 'platform-error')
+
+    const snapshot = await instance.service.loadWorkspace('100')
+    assert.equal(snapshot.revision, 5)
+    assert.deepEqual(snapshot.draft.privateMenu, draftMenu)
+    assert.deepEqual(snapshot.published.privateMenu?.menu, oldMenu)
+    assert.equal(snapshot.published.privateMenu?.version, 9)
+  })
+
+  it('expected revision 不匹配时返回 revision-conflict，且不写平台', async () => {
+    const instance = harness()
+    const result = await instance.service.publishPrivateMenu({ appId: '100', expectedRevision: 99 })
+    assert.equal(result.ok, false)
+    if (result.ok) return
+    assert.equal(result.code, 'revision-conflict')
+    assert.equal(instance.platform.setCalls.length, 0)
+  })
+
+  it('未知字段在 Publish 后原样带回平台', async () => {
+    const instance = harness()
+    const draft = configuration({
+      privateMenu: {
+        items: [{ name: '帮助', type: 'send_message', send_message: '/help', futureItemField: 42 }],
+        futureTopField: { nested: true },
+      },
+      unknownTopLevel: 'keep-me',
+    })
+    await expectSaved(await instance.service.saveDraft({ appId: '100', expectedRevision: 0, configuration: draft }))
+    const result = await instance.service.publishPrivateMenu({ appId: '100', expectedRevision: 1 })
+    assert.ok(result.ok)
+    assert.deepEqual(instance.platform.setCalls[0].menu, draft.privateMenu)
+  })
+
+  it('离线机器人返回 bot-offline，不写平台', async () => {
+    const instance = harness()
+    const result = await instance.service.publishPrivateMenu({ appId: '200', expectedRevision: 0 })
+    assert.equal(result.ok, false)
+    if (result.ok) return
+    assert.equal(result.code, 'bot-offline')
+    assert.equal(instance.platform.setCalls.length, 0)
+  })
+})
+
+
+describe('MenuService：导入作为 Drift 基线', () => {
+  it('导入成功后 Published Revision 记录平台当前内容与版本', async () => {
+    const instance = harness()
+    instance.platform.seed('100', { items: [{ name: '平台', type: 'send_message', send_message: '/x' }] }, 12)
+
+    const result = await instance.service.importPrivateMenu({ appId: '100' })
+    assert.ok(result.ok)
+
+    const snapshot = await instance.service.loadWorkspace('100')
+    assert.deepEqual(snapshot.published.privateMenu?.menu, { items: [{ name: '平台', type: 'send_message', send_message: '/x' }] })
+    assert.equal(snapshot.published.privateMenu?.version, 12)
+    assert.equal(snapshot.published.privateMenu?.publishedAt, result.ok ? result.importedAt : '')
+  })
+})

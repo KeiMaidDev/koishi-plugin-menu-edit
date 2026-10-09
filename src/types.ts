@@ -144,3 +144,106 @@ export function emptyPanelConfiguration(): PanelConfiguration {
 export function deepClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
+
+// ---------------------------------------------------------------------------
+// Private Menu 纵向链路（issue #3）：类型常量、校验结果、导入与发布结果。
+// ---------------------------------------------------------------------------
+
+/** Private Menu Item 的平台类型；unknown/未来类型保留在 JSON 中但校验报错。 */
+export const PRIVATE_MENU_ITEM_TYPES = ['send_message', 'link', 'menu', 'switch'] as const
+export type PrivateMenuItemType = (typeof PRIVATE_MENU_ITEM_TYPES)[number]
+
+/** Private Menu 子菜单项的平台类型（adapter SubMenuItemType）。 */
+export const PRIVATE_MENU_SUB_ITEM_TYPES = ['send_message', 'link'] as const
+export type PrivateMenuSubItemType = (typeof PRIVATE_MENU_SUB_ITEM_TYPES)[number]
+
+/** 平台 MenuItem.switch 的结构。 */
+export interface PrivateMenuSwitch {
+  switch_id: string
+  default: boolean
+}
+
+/** Private Menu Strip 一级按钮上限；四类条目都计入。 */
+export const PRIVATE_MENU_MAX_ITEMS = 10
+/** 单个 menu 子菜单项上限。 */
+export const PRIVATE_MENU_MAX_SUB_ITEMS = 5
+/** Group Panel 条目上限。 */
+export const GROUP_PANEL_MAX_ITEMS = 20
+
+export type ValidationSeverity = 'error' | 'warning'
+
+/** 单条校验结果；结构化与 JSON 模式共用同一套稳定 code / path。 */
+export interface ValidationIssue {
+  severity: ValidationSeverity
+  /** 稳定错误码，供 UI 与测试断言，不随文案变化。 */
+  code: string
+  /** 指向 Draft 内字段的路径，如 `privateMenu.items[0].link`。 */
+  path: string
+  message: string
+}
+
+export interface ValidationResult {
+  errors: ValidationIssue[]
+  warnings: ValidationIssue[]
+}
+
+/** 导入当前 Private Menu 的请求。 */
+export interface ImportPrivateMenuInput {
+  appId: string
+}
+
+export interface ImportPrivateMenuSuccess {
+  ok: true
+  surface: 'privateMenu'
+  /** 导入写入后的新 revision。 */
+  revision: number
+  importedAt: string
+  imported: PrivateMenuConfiguration
+}
+
+export interface ImportPrivateMenuFailure {
+  ok: false
+  surface: 'privateMenu'
+  code: 'unknown-bot' | 'bot-offline' | 'platform-error'
+  message: string
+}
+
+export type ImportPrivateMenuResult = ImportPrivateMenuSuccess | ImportPrivateMenuFailure
+
+/** Publish 目前只发布 Private Menu；Group Panel 写入由后续 issue 接入。 */
+export const PUBLISH_PRIVATE_MENU_SURFACE = 'privateMenu' as const
+
+export interface PrivateMenuPublishInput {
+  appId: string
+  expectedRevision: number
+}
+
+export interface PrivateMenuPublishSuccess {
+  ok: true
+  surface: 'privateMenu'
+  published: PublishedPrivateMenu
+  /** 发布成功后的新 revision。 */
+  revision: number
+  warnings: ValidationIssue[]
+}
+
+export type PrivateMenuPublishFailureCode =
+  | 'unknown-bot'
+  | 'bot-offline'
+  | 'revision-conflict'
+  | 'validation-failed'
+  | 'platform-error'
+
+export interface PrivateMenuPublishFailure {
+  ok: false
+  surface: 'privateMenu'
+  code: PrivateMenuPublishFailureCode
+  message: string
+  errors: ValidationIssue[]
+  /** 失败时回传服务端当前 revision 与 Draft，便于 UI 重载或强制覆盖。 */
+  revision: number
+  draft: PanelConfiguration
+  published: PublishedPrivateMenu | null
+}
+
+export type PrivateMenuPublishResult = PrivateMenuPublishSuccess | PrivateMenuPublishFailure

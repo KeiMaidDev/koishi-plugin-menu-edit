@@ -33,6 +33,8 @@ describe('插件入口', () => {
         'menu-edit/workspace',
         'menu-edit/save-draft',
         'menu-edit/discard-draft',
+        'menu-edit/import-private-menu',
+        'menu-edit/publish-private-menu',
       ])
       assert.equal(entries, 1)
     } finally {

@@ -12,5 +12,5 @@
       "@koishijs/client": ["./client/env.d.ts"]
     }
   },
-  "include": ["client", "src/types.ts", "src/console-permission.ts"]
+  "include": ["client", "src/types.ts", "src/guards.ts", "src/validation.ts", "src/console-permission.ts"]
 }

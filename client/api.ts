@@ -3,6 +3,10 @@ import type {
   BotInstanceSummary,
   DiscardDraftInput,
   DraftMutationResult,
+  ImportPrivateMenuInput,
+  ImportPrivateMenuResult,
+  PrivateMenuPublishInput,
+  PrivateMenuPublishResult,
   SaveDraftInput,
   WorkspaceSnapshot,
 } from '../src/types'
@@ -12,8 +16,13 @@ export type {
   DiscardDraftInput,
   DraftMutationResult,
   DraftRevisionConflict,
+  ImportPrivateMenuInput,
+  ImportPrivateMenuResult,
   PanelConfiguration,
+  PrivateMenuPublishInput,
+  PrivateMenuPublishResult,
   SaveDraftInput,
+  ValidationIssue,
   WorkspaceSnapshot,
 } from '../src/types'
 
@@ -25,3 +34,7 @@ export const fetchWorkspace = (appId: string) => send<WorkspaceSnapshot>('menu-e
 export const saveDraft = (input: SaveDraftInput) => send<DraftMutationResult>('menu-edit/save-draft', input)
 export const discardDraft = (input: DiscardDraftInput) =>
   send<DraftMutationResult>('menu-edit/discard-draft', input)
+export const importPrivateMenu = (input: ImportPrivateMenuInput) =>
+  send<ImportPrivateMenuResult>('menu-edit/import-private-menu', input)
+export const publishPrivateMenu = (input: PrivateMenuPublishInput) =>
+  send<PrivateMenuPublishResult>('menu-edit/publish-private-menu', input)
