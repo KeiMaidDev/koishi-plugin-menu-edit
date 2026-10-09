@@ -36,7 +36,7 @@ export function normalizePrivateMenu(value: unknown): PrivateMenuConfiguration {
   return { ...value, items: Array.isArray(rawItems) ? rawItems : [] }
 }
 
-function normalizeGroupPanel(value: unknown): GroupPanelConfiguration {
+export function normalizeGroupPanel(value: unknown): GroupPanelConfiguration {
   if (value === undefined || value === null) return emptyGroupPanel()
   if (!isRecord(value)) {
     throw new MenuConfigurationError('groupPanel', 'groupPanel 必须是对象。')

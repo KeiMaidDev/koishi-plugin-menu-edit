@@ -50,6 +50,8 @@ describe('Menu Edit Console：权限与入口', () => {
       'menu-edit/discard-draft',
       'menu-edit/import-private-menu',
       'menu-edit/publish-private-menu',
+      'menu-edit/import-group-panel',
+      'menu-edit/publish-group-panel',
     ])
     for (const item of captured) assert.equal(item.authority, 4, `${item.event} 必须要求 authority 4`)
     assert.equal(entries.length, 1, '必须注册客户端 entry')
@@ -70,4 +72,3 @@ describe('Menu Edit Console：权限与入口', () => {
     assert.ok(!prod.includes('node_modules'))
   })
 })
-

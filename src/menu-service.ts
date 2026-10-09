@@ -7,7 +7,9 @@
  */
 import type { BotRegistry } from './bot-registry'
 import { normalizePanelConfiguration } from './configuration'
-import { MenuPlatformError, type MenuPlatform, type PlatformPrivateMenu } from './platform'
+import { isRecord } from './guards'
+import { MenuPlatformError, type MenuPlatform, type PlatformGroupPanel, type PlatformPrivateMenu } from './platform'
+import { defaultSleep, PanelWriteThrottle } from './panel-throttle'
 import type { MenuStateStore } from './state-store'
 import { advanceDraft, createInitialState, recordedConfiguration } from './state'
 import {
@@ -16,17 +18,24 @@ import {
   type BotInstanceSummary,
   type DiscardDraftInput,
   type DraftMutationResult,
+  type GroupPanelCandidate,
+  type GroupPanelPublishInput,
+  type GroupPanelPublishResult,
+  type ImportGroupPanelFailure,
+  type ImportGroupPanelInput,
+  type ImportGroupPanelResult,
   type ImportPrivateMenuInput,
   type ImportPrivateMenuResult,
   type MenuState,
   type PanelConfiguration,
   type PrivateMenuPublishInput,
   type PrivateMenuPublishResult,
+  type PublishedGroupPanel,
   type PublishedRevisions,
   type SaveDraftInput,
   type WorkspaceSnapshot,
 } from './types'
-import { validatePrivateMenu } from './validation'
+import { validateGroupPanel, validatePrivateMenu } from './validation'
 
 export type MenuServiceErrorCode = 'unknown-bot'
 
@@ -47,6 +56,8 @@ export interface MenuServiceOptions {
   platform?: MenuPlatform
   /** 注入时钟，便于测试断言 revision 与时间戳。 */
   now?: () => Date
+  /** 注入 sleep，便于测试用假时钟快速断言 Group Panel 6500ms 节流。 */
+  sleep?: (ms: number) => Promise<void>
 }
 
 export class MenuService {
@@ -54,12 +65,19 @@ export class MenuService {
   private readonly store: MenuStateStore
   private readonly platform: MenuPlatform | null
   private readonly now: () => Date
+  private readonly throttle: PanelWriteThrottle
+  /** 每个 AppID 最近一次列给用户确认的待删除 panel ID；防止单次请求跳过「先列出再确认」。 */
+  private readonly cleanupListings = new Map<string, string[]>()
 
   constructor(options: MenuServiceOptions) {
     this.registry = options.registry
     this.store = options.store
     this.platform = options.platform ?? null
     this.now = options.now ?? (() => new Date())
+    this.throttle = new PanelWriteThrottle({
+      now: () => this.now().getTime(),
+      sleep: options.sleep ?? defaultSleep,
+    })
   }
 
   /** 只返回 platform === 'qq' 的 Bot Instance，并按 AppID 去重。 */
@@ -228,6 +246,276 @@ export class MenuService {
   }
 
   /**
+   * 导入当前 Group Panel，建立 Managed Panel 基线。
+   *
+   * 零个候选时创建 group/all Managed Panel 并采用当前 Draft 内容；一个候选时自动接管；
+   * 多个候选且未指定 panelId 时返回 selection-required 与候选列表，由用户选择唯一对象。
+   */
+  async importGroupPanel(input: ImportGroupPanelInput): Promise<ImportGroupPanelResult> {
+    const bot = this.findBot(input.appId)
+    if (!bot) return importGroupFailure('unknown-bot', `未找到 AppID 为 ${input.appId} 的 QQ Bot Instance。`)
+    if (!bot.online) return importGroupFailure('bot-offline', `AppID ${input.appId} 的机器人当前不在线。`)
+    if (!this.platform) return importGroupFailure('platform-error', 'QQ 平台能力不可用。')
+
+    return this.store.runExclusive(input.appId, async () => {
+      // 候选选择或平台读取失败时不应留下状态文件，因此这里只合成初始状态，不落盘。
+      const state = (await this.store.read(input.appId)) ?? createInitialState(input.appId, this.now().toISOString())
+
+      let panels: PlatformGroupPanel[]
+      try {
+        panels = await this.platform!.listGroupPanels(input.appId)
+      } catch (error) {
+        return importGroupFailure(groupPlatformFailureCode(error), errorMessage(error))
+      }
+
+      const candidates = panels.filter(panel => panel.targetType === 'all')
+      const now = this.now().toISOString()
+
+      let target: PlatformGroupPanel
+      let created = false
+      let version: number | null = null
+
+      if (candidates.length === 0) {
+        try {
+          const createdPanel = await this.throttle.run(input.appId, () =>
+            this.platform!.createGroupPanel(input.appId, deepClone(state.draft.groupPanel)))
+          target = {
+            panelId: createdPanel.panelId,
+            targetType: 'all',
+            remark: typeof state.draft.groupPanel.remark === 'string' ? state.draft.groupPanel.remark : '',
+            updatedAt: now,
+            version: createdPanel.version,
+            panel: deepClone(state.draft.groupPanel),
+          }
+          version = createdPanel.version
+          created = true
+        } catch (error) {
+          return importGroupFailure(groupPlatformFailureCode(error), errorMessage(error))
+        }
+      } else if (input.panelId === undefined) {
+        if (candidates.length > 1) {
+          return importGroupFailure(
+            'selection-required',
+            `发现 ${candidates.length} 个 Group Panel 候选，请选择唯一的接管对象。`,
+            candidates.map(toGroupPanelCandidate),
+          )
+        }
+        target = candidates[0]
+      } else {
+        const selected = candidates.find(panel => panel.panelId === input.panelId)
+        if (!selected) {
+          return importGroupFailure(
+            'panel-missing',
+            `候选列表中不存在 panel ID 为 ${input.panelId} 的 Group Panel。`,
+            candidates.map(toGroupPanelCandidate),
+          )
+        }
+        target = selected
+      }
+
+      version = version ?? target.version
+      const imported = deepClone(target.panel)
+      const importedConfiguration = {
+        ...(state.importedConfiguration ?? emptyPanelConfiguration()),
+        groupPanel: deepClone(imported),
+      }
+      const published: PublishedGroupPanel = {
+        panelId: target.panelId,
+        panel: deepClone(imported),
+        version,
+        publishedAt: now,
+        cleanup: { panelIds: [], updatedAt: null },
+      }
+      const next: MenuState = {
+        ...state,
+        revision: state.revision + 1,
+        updatedAt: now,
+        importedConfiguration,
+        draft: { ...state.draft, groupPanel: deepClone(imported) },
+        published: { ...state.published, groupPanel: published },
+      }
+      await this.store.write(input.appId, next)
+      return {
+        ok: true as const,
+        surface: 'groupPanel' as const,
+        revision: next.revision,
+        importedAt: now,
+        imported: deepClone(imported),
+        managedPanelId: target.panelId,
+        created,
+      }
+    })
+  }
+
+  /**
+   * Publish Group Panel：优先修改已接管的 Managed Panel，不存在时创建新的 group/all Panel，
+   * 写入成功后按用户确认的列表逐项删除其他 group Panel。
+   *
+   * 连续平台写入由 PanelWriteThrottle 统一节流（至少 6500ms），并发调用无法绕过。
+   * Managed Panel 写入成功即更新 Published Revision；清理未全部完成时返回 partial 并持久化
+   * 待清理 panel ID。校验失败、revision 冲突、40030013 与 Managed Panel 写入失败都保留
+   * Draft 与旧 Published Revision。
+   */
+  async publishGroupPanel(input: GroupPanelPublishInput): Promise<GroupPanelPublishResult> {
+    const bot = this.findBot(input.appId)
+    if (!bot) return this.groupPanelPublishFailure('unknown-bot', `未找到 AppID 为 ${input.appId} 的 QQ Bot Instance。`)
+    if (!bot.online) return this.groupPanelPublishFailure('bot-offline', `AppID ${input.appId} 的机器人当前不在线。`)
+    if (!this.platform) return this.groupPanelPublishFailure('platform-error', 'QQ 平台能力不可用。')
+
+    return this.store.runExclusive(input.appId, async () => {
+      const state = await this.readOrCreate(input.appId)
+      const previous = state.published.groupPanel
+
+      if (state.revision !== input.expectedRevision) {
+        return {
+          ok: false as const,
+          surface: 'groupPanel' as const,
+          code: 'revision-conflict' as const,
+          message: `revision 冲突：服务端当前为 revision ${state.revision}。`,
+          errors: [],
+          revision: state.revision,
+          draft: deepClone(state.draft),
+          published: deepClone(previous),
+          candidates: [],
+        }
+      }
+
+      const validation = validateGroupPanel(state.draft.groupPanel)
+      if (validation.errors.length) {
+        return {
+          ok: false as const,
+          surface: 'groupPanel' as const,
+          code: 'validation-failed' as const,
+          message: `Group Panel 校验失败：${validation.errors.length} 个硬错误。`,
+          errors: validation.errors,
+          revision: state.revision,
+          draft: deepClone(state.draft),
+          published: deepClone(previous),
+          candidates: [],
+        }
+      }
+
+      let panels: PlatformGroupPanel[]
+      try {
+        panels = await this.platform!.listGroupPanels(input.appId)
+      } catch (error) {
+        return {
+          ok: false as const,
+          surface: 'groupPanel' as const,
+          code: groupPlatformFailureCode(error),
+          message: errorMessage(error),
+          errors: [],
+          revision: state.revision,
+          draft: deepClone(state.draft),
+          published: deepClone(previous),
+          candidates: [],
+        }
+      }
+
+      const managed = previous ? panels.find(panel => panel.panelId === previous.panelId) : undefined
+      const others = panels.filter(panel => panel.panelId !== managed?.panelId)
+      const otherIds = others.map(panel => panel.panelId)
+
+      // 发布前必须先列出所有其他 group Panel，再由下一次请求确认；仅携带匹配 ID 的单次请求
+      // 不能跳过这一往返。确认结果与平台现状不一致时重新列出。
+      const listed = this.cleanupListings.get(input.appId)
+      const confirmed = input.cleanupPanelIds
+      const confirmedMatches = confirmed !== undefined
+        && listed !== undefined
+        && sameStringSet(listed, otherIds)
+        && sameStringSet(confirmed, otherIds)
+      if (!confirmedMatches && (otherIds.length > 0 || confirmed !== undefined)) {
+        this.cleanupListings.set(input.appId, [...otherIds])
+        return {
+          ok: false as const,
+          surface: 'groupPanel' as const,
+          code: 'cleanup-confirmation-required' as const,
+          message: `发布前需要确认删除 ${otherIds.length} 个其他 group Panel。`,
+          errors: [],
+          revision: state.revision,
+          draft: deepClone(state.draft),
+          published: deepClone(previous),
+          candidates: others.map(toGroupPanelCandidate),
+        }
+      }
+
+      this.cleanupListings.delete(input.appId)
+      const draftPanel = deepClone(state.draft.groupPanel)
+      let managedPanelId: string
+      let version: number | null
+      try {
+        if (managed) {
+          managedPanelId = managed.panelId
+          const written = await this.throttle.run(input.appId, () =>
+            this.platform!.modifyGroupPanel(input.appId, managed.panelId, draftPanel))
+          version = written.version
+        } else {
+          const created = await this.throttle.run(input.appId, () =>
+            this.platform!.createGroupPanel(input.appId, draftPanel))
+          managedPanelId = created.panelId
+          version = created.version
+        }
+      } catch (error) {
+        return {
+          ok: false as const,
+          surface: 'groupPanel' as const,
+          code: groupPlatformFailureCode(error),
+          message: errorMessage(error),
+          errors: [],
+          revision: state.revision,
+          draft: deepClone(state.draft),
+          published: deepClone(previous),
+          candidates: [],
+        }
+      }
+
+      // Managed Panel 写入成功后先落盘 Published Revision 与待清理列表，再开始删除其他面板。
+      const publishedAt = this.now().toISOString()
+      const pendingIds = [...otherIds]
+      const published: PublishedGroupPanel = {
+        panelId: managedPanelId,
+        panel: draftPanel,
+        version,
+        publishedAt,
+        cleanup: { panelIds: [...pendingIds], updatedAt: pendingIds.length ? publishedAt : null },
+      }
+      const next: MenuState = {
+        ...state,
+        revision: state.revision + 1,
+        updatedAt: publishedAt,
+        published: { ...state.published, groupPanel: published },
+      }
+      await this.store.write(input.appId, next)
+
+      const remaining = new Set(pendingIds)
+      for (const panelId of pendingIds) {
+        try {
+          await this.throttle.run(input.appId, () => this.platform!.deleteGroupPanel(input.appId, panelId))
+          remaining.delete(panelId)
+        } catch {
+          // 删除失败的面板与尚未尝试的面板都保留在待清理列表，稍后重试。
+        }
+      }
+
+      const pending = pendingIds.filter(panelId => remaining.has(panelId))
+      if (pending.length !== pendingIds.length) {
+        const cleanupUpdatedAt = pending.length ? this.now().toISOString() : null
+        published.cleanup = { panelIds: pending, updatedAt: cleanupUpdatedAt }
+        next.updatedAt = cleanupUpdatedAt ?? published.publishedAt
+        await this.store.write(input.appId, next)
+      }
+
+      return {
+        ok: true as const,
+        surface: 'groupPanel' as const,
+        status: pending.length ? 'partial' as const : 'published' as const,
+        published: deepClone(published),
+        revision: next.revision,
+        warnings: validation.warnings,
+      }
+    })
+  }
+  /**
    * 所有 Draft 变更共用的 read-modify-write：读取、校验 revision、计算新 Draft、
    * 递增 revision 并写入，整段在一个 AppID 的互斥段内完成。
    */
@@ -304,6 +592,24 @@ export class MenuService {
       published: null,
     }
   }
+
+  /** Group Panel 早于状态读取的失败：回传空 revision / Draft 占位。 */
+  private groupPanelPublishFailure(
+    code: 'unknown-bot' | 'bot-offline' | 'platform-error',
+    message: string,
+  ): GroupPanelPublishResult {
+    return {
+      ok: false,
+      surface: 'groupPanel',
+      code,
+      message,
+      errors: [],
+      revision: 0,
+      draft: emptyPanelConfiguration(),
+      published: null,
+      candidates: [],
+    }
+  }
 }
 
 function errorMessage(error: unknown): string {
@@ -313,6 +619,49 @@ function errorMessage(error: unknown): string {
 /** 把平台异常收敛为稳定发布/导入错误码；未知异常归为 platform-error。 */
 function platformFailureCode(error: unknown): 'bot-offline' | 'platform-error' | 'unknown-bot' {
   if (error instanceof MenuPlatformError) {
+    if (error.code === 'bot-offline') return 'bot-offline'
+    if (error.code === 'bot-missing') return 'unknown-bot'
+  }
+  return 'platform-error'
+}
+/** 把平台 panel 收敛成 UI 确认框使用的候选摘要。 */
+function toGroupPanelCandidate(panel: PlatformGroupPanel): GroupPanelCandidate {
+  const items = Array.isArray(panel.panel.items) ? panel.panel.items : []
+  const names = items
+    .map(item => (isRecord(item) && typeof item.name === 'string' ? item.name.trim() : ''))
+    .filter(Boolean)
+  const summary = names.length
+    ? `${names.slice(0, 3).join('、')}${names.length > 3 ? ` 等 ${items.length} 项` : ''}`
+    : '（无条目）'
+  return {
+    panelId: panel.panelId,
+    remark: panel.remark,
+    updatedAt: panel.updatedAt,
+    itemCount: items.length,
+    itemSummary: summary,
+  }
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false
+  const set = new Set(left)
+  return right.every(value => set.has(value))
+}
+
+function importGroupFailure(
+  code: ImportGroupPanelFailure['code'],
+  message: string,
+  candidates: GroupPanelCandidate[] = [],
+): ImportGroupPanelFailure {
+  return { ok: false, surface: 'groupPanel', code, message, candidates }
+}
+
+/** Group Panel 平台异常码；quantity-limit 对应 QQ 40030013。 */
+function groupPlatformFailureCode(
+  error: unknown,
+): 'bot-offline' | 'platform-error' | 'unknown-bot' | 'quantity-limit' {
+  if (error instanceof MenuPlatformError) {
+    if (error.code === 'quantity-limit') return 'quantity-limit'
     if (error.code === 'bot-offline') return 'bot-offline'
     if (error.code === 'bot-missing') return 'unknown-bot'
   }

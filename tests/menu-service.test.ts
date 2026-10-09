@@ -7,12 +7,12 @@ import {
   type PanelConfiguration,
   type WorkspaceSnapshot,
 } from '../src/types'
-import { createHarness, makeState, type FakeBot, type Harness } from './harness'
+import { createHarness, makeState, type FakeBot, type Harness, type HarnessOptions } from './harness'
 
 const harnesses: Harness[] = []
 
-function harness(bots?: FakeBot[], now?: () => Date): Harness {
-  const instance = createHarness(bots, now)
+function harness(bots?: FakeBot[], options?: HarnessOptions): Harness {
+  const instance = createHarness(bots, options)
   harnesses.push(instance)
   return instance
 }

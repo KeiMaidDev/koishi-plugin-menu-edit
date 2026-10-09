@@ -35,6 +35,8 @@ describe('插件入口', () => {
         'menu-edit/discard-draft',
         'menu-edit/import-private-menu',
         'menu-edit/publish-private-menu',
+        'menu-edit/import-group-panel',
+        'menu-edit/publish-group-panel',
       ])
       assert.equal(entries, 1)
     } finally {

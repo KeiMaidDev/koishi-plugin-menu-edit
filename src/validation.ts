@@ -9,6 +9,7 @@
  */
 import { isRecord } from './guards'
 import {
+  GROUP_PANEL_ITEM_TYPES,
   GROUP_PANEL_MAX_ITEMS,
   PRIVATE_MENU_ITEM_TYPES,
   PRIVATE_MENU_MAX_ITEMS,
@@ -23,6 +24,7 @@ import {
 
 const MENU_ITEM_TYPES = new Set<string>(PRIVATE_MENU_ITEM_TYPES)
 const SUB_MENU_ITEM_TYPES = new Set<string>(PRIVATE_MENU_SUB_ITEM_TYPES)
+const GROUP_PANEL_ITEM_TYPE_SET = new Set<string>(GROUP_PANEL_ITEM_TYPES)
 
 /** 名称展示宽度；中文等宽字符按 2 计，与适配器/平台限制口径一致。 */
 export function displayWidth(text: string): number {
@@ -238,8 +240,12 @@ export function validateGroupPanel(panel: GroupPanelConfiguration): ValidationRe
       }
     }
 
+    if (item.only_admin !== undefined && typeof item.only_admin !== 'boolean') {
+      issues.push(error('group-panel.item.only-admin-invalid', `${path}.only_admin`, 'only_admin 必须是布尔值。'))
+    }
+
     const type = item.type
-    if (type !== 'command' && type !== 'link') {
+    if (typeof type !== 'string' || !GROUP_PANEL_ITEM_TYPE_SET.has(type)) {
       issues.push(error('group-panel.item.type-invalid', `${path}.type`, `不支持的条目类型：${String(type)}。`))
       return
     }

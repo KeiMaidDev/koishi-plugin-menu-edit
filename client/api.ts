@@ -3,6 +3,10 @@ import type {
   BotInstanceSummary,
   DiscardDraftInput,
   DraftMutationResult,
+  GroupPanelPublishInput,
+  GroupPanelPublishResult,
+  ImportGroupPanelInput,
+  ImportGroupPanelResult,
   ImportPrivateMenuInput,
   ImportPrivateMenuResult,
   PrivateMenuPublishInput,
@@ -16,6 +20,12 @@ export type {
   DiscardDraftInput,
   DraftMutationResult,
   DraftRevisionConflict,
+  GroupPanelCandidate,
+  GroupPanelItemType,
+  GroupPanelPublishInput,
+  GroupPanelPublishResult,
+  ImportGroupPanelInput,
+  ImportGroupPanelResult,
   ImportPrivateMenuInput,
   ImportPrivateMenuResult,
   PanelConfiguration,
@@ -38,3 +48,7 @@ export const importPrivateMenu = (input: ImportPrivateMenuInput) =>
   send<ImportPrivateMenuResult>('menu-edit/import-private-menu', input)
 export const publishPrivateMenu = (input: PrivateMenuPublishInput) =>
   send<PrivateMenuPublishResult>('menu-edit/publish-private-menu', input)
+export const importGroupPanel = (input: ImportGroupPanelInput) =>
+  send<ImportGroupPanelResult>('menu-edit/import-group-panel', input)
+export const publishGroupPanel = (input: GroupPanelPublishInput) =>
+  send<GroupPanelPublishResult>('menu-edit/publish-group-panel', input)

@@ -126,3 +126,34 @@ describe('validation：警告', () => {
     assert.equal(displayWidth('abcd'), 4)
   })
 })
+describe('validation：Group Panel 条目字段', () => {
+  function group(items: unknown[]) {
+    return validatePanelConfiguration({ privateMenu: { items: [] }, groupPanel: { items } })
+  }
+
+  it('command 名称缺少 / 只报警告，link 缺少链接报硬错误并提示非 https', () => {
+    const result = group([
+      { name: 'help', desc: '帮助', type: 'command', only_admin: false },
+      { name: '官网', desc: '打开官网', type: 'link', only_admin: true },
+      { name: '文档', type: 'link', link: 'http://example.com', only_admin: false },
+    ])
+    assert.ok(result.warnings.some(issue => issue.code === 'group-panel.item.command-prefix'))
+    assert.ok(result.errors.some(issue => issue.code === 'group-panel.item.link-required'))
+    assert.ok(result.warnings.some(issue => issue.code === 'group-panel.item.link-insecure'))
+  })
+
+  it('only_admin 必须是布尔值，未知类型报硬错误', () => {
+    const result = group([
+      { name: '/a', type: 'command', only_admin: 'yes' },
+      { name: '/b', type: 'unknown', only_admin: false },
+    ])
+    assert.ok(result.errors.some(issue => issue.code === 'group-panel.item.only-admin-invalid'))
+    assert.ok(result.errors.some(issue => issue.code === 'group-panel.item.type-invalid'))
+  })
+
+  it('描述展示宽度超过 30 只报警告', () => {
+    const result = group([{ name: '/a', desc: '很长的描述'.repeat(8), type: 'command', only_admin: false }])
+    assert.ok(result.warnings.some(issue => issue.code === 'group-panel.item.desc-too-wide'))
+    assert.equal(result.errors.length, 0)
+  })
+})

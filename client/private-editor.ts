@@ -76,7 +76,8 @@ export const PrivateMenuEditor = defineComponent({
     const patched = (index: number, patch: Record<string, unknown>) =>
       update(replaceAt(props.items, index, patchItem(props.items[index], patch)))
 
-    const issuesFor = (prefix: string) => props.issues.filter(issue => issue.path.startsWith(prefix))
+    const issuesFor = (prefix: string) =>
+      props.issues.filter(issue => issue.path === prefix || issue.path.startsWith(`${prefix}.`))
     const errorCount = (prefix: string) => issuesFor(prefix).filter(issue => issue.severity === 'error').length
     const warningCount = (prefix: string) => issuesFor(prefix).filter(issue => issue.severity === 'warning').length
 

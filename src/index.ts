@@ -31,7 +31,7 @@ export function apply(ctx: Context, _config: Config) {
 
 export { MenuService, MenuServiceError } from './menu-service'
 export { createKoishiMenuPlatform, MenuPlatformError } from './platform'
-export { displayWidth, validatePanelConfiguration, validatePrivateMenu } from './validation'
+export { displayWidth, validateGroupPanel, validatePanelConfiguration, validatePrivateMenu } from './validation'
 export { MenuStateStore, MenuStateStoreError } from './state-store'
 export { CONSOLE_PANEL_AUTHORITY } from './console-permission'
 export * from './types'

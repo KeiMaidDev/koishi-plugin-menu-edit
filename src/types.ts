@@ -247,3 +247,101 @@ export interface PrivateMenuPublishFailure {
 }
 
 export type PrivateMenuPublishResult = PrivateMenuPublishSuccess | PrivateMenuPublishFailure
+
+// ---------------------------------------------------------------------------
+// Group Panel 纵向链路（issue #4）：条目类型、接管候选、导入与发布结果。
+// ---------------------------------------------------------------------------
+
+/** Group Panel Item 的平台类型（adapter PanelItemType）。 */
+export const GROUP_PANEL_ITEM_TYPES = ['command', 'link'] as const
+export type GroupPanelItemType = (typeof GROUP_PANEL_ITEM_TYPES)[number]
+
+/** 发布前展示给用户确认的其他 group Panel 摘要。 */
+export interface GroupPanelCandidate {
+  panelId: string
+  remark: string
+  updatedAt: string | null
+  itemCount: number
+  itemSummary: string
+}
+
+/** 导入当前 Group Panel 的请求；多个候选时必须携带选中的 panelId。 */
+export interface ImportGroupPanelInput {
+  appId: string
+  panelId?: string
+}
+
+export interface ImportGroupPanelSuccess {
+  ok: true
+  surface: 'groupPanel'
+  /** 导入写入后的新 revision。 */
+  revision: number
+  importedAt: string
+  imported: GroupPanelConfiguration
+  /** 被接管的 Managed Panel ID；零候选时为新建面板的 ID。 */
+  managedPanelId: string
+  /** 本次是否新建了 Managed Panel。 */
+  created: boolean
+}
+
+export type ImportGroupPanelFailureCode =
+  | 'unknown-bot'
+  | 'bot-offline'
+  | 'platform-error'
+  | 'quantity-limit'
+  | 'selection-required'
+  | 'panel-missing'
+
+export interface ImportGroupPanelFailure {
+  ok: false
+  surface: 'groupPanel'
+  code: ImportGroupPanelFailureCode
+  message: string
+  /** 仅 selection-required 时列出全部候选，其余为空数组。 */
+  candidates: GroupPanelCandidate[]
+}
+
+export type ImportGroupPanelResult = ImportGroupPanelSuccess | ImportGroupPanelFailure
+
+/** Publish Group Panel 的请求；cleanupPanelIds 是用户已确认删除的其他 group Panel。 */
+export interface GroupPanelPublishInput {
+  appId: string
+  expectedRevision: number
+  cleanupPanelIds?: string[]
+}
+
+export type GroupPanelPublishFailureCode =
+  | 'unknown-bot'
+  | 'bot-offline'
+  | 'revision-conflict'
+  | 'validation-failed'
+  | 'platform-error'
+  | 'quantity-limit'
+  | 'cleanup-confirmation-required'
+
+export interface GroupPanelPublishSuccess {
+  ok: true
+  surface: 'groupPanel'
+  /** published 表示 Managed Panel 与其他面板都被清理；partial 表示仍有待清理面板。 */
+  status: 'published' | 'partial'
+  published: PublishedGroupPanel
+  /** 发布写入后的新 revision。 */
+  revision: number
+  warnings: ValidationIssue[]
+}
+
+export interface GroupPanelPublishFailure {
+  ok: false
+  surface: 'groupPanel'
+  code: GroupPanelPublishFailureCode
+  message: string
+  errors: ValidationIssue[]
+  /** 失败时回传服务端当前 revision 与 Draft，便于 UI 重载或强制覆盖。 */
+  revision: number
+  draft: PanelConfiguration
+  published: PublishedGroupPanel | null
+  /** cleanup-confirmation-required 时列出待确认删除的面板，其余为空数组。 */
+  candidates: GroupPanelCandidate[]
+}
+
+export type GroupPanelPublishResult = GroupPanelPublishSuccess | GroupPanelPublishFailure

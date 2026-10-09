@@ -6,7 +6,7 @@ QQ 机器人菜单编辑面板。在 Koishi Console 中以 `/menu-edit` 按 Bot 
 Private Menu 与 Group Panel 的 Panel Configuration，Draft 自动保存到数据目录下的 JSON，
 Publish 单独触发。
 
-当前纵向切片（issue #3）提供 Private Menu 全链路：
+当前纵向切片（issue #3 / #4）提供 Private Menu 与 Group Panel 全链路：
 
 - 只列出 `bot.platform === 'qq'` 的 Bot Instance，并按 AppID 隔离 Draft、revision 与写入队列。
 - 一键导入当前 Private Menu：读取失败会显示错误并允许重试，不用空配置静默覆盖 Draft。
@@ -20,13 +20,23 @@ Publish 单独触发。
   失败（revision 冲突 / 硬校验错误 / 平台错误）保留 Draft 与旧 Published Revision。
 - 携带 expected revision 的 Draft 保存；过期 revision 返回 `revision-conflict`，可选择重载或强制覆盖。
 - Discard Draft（需确认），恢复 Published Revision；未发布时回退到导入内容。
+- Group Panel 首次导入：零个候选时创建并接管 group/all Managed Panel，一个候选时自动接管，
+  多个候选时列出 panel ID、备注、更新时间与条目摘要，由用户选择唯一接管对象。
+- Group Panel 结构化编辑器支持 command / link 条目的名称、描述、链接与 `only_admin` 编辑，
+  以及新增、删除、复制、展开与拖拽/上下移排序；条目上限 20，超出时阻止 Publish。
+- Group Panel 手机预览按编辑区顺序展示名称、描述与管理员标记。
+- Publish Group Panel 优先修改 Managed Panel，不存在时创建；发布前列出其他 group Panel 并要求
+  用户确认，Managed Panel 写入成功后再逐项删除其他面板。
+- Group Panel 连续平台写入按 AppID 串行并强制至少间隔 6500ms，并发请求无法绕过；
+  清理部分失败时返回 partial 并持久化待清理 panel ID。
+- 平台返回 QQ 错误码 `40030013`（条目数量超限）时返回 `quantity-limit`，保留 Draft 与旧
+  Published Revision。
 - 页面与所有读取/写入 RPC 均要求 `authority: 4`。
 
 状态文件位于 `<baseDir>/data/menu-edit/<encoded-appId>.json`，采用按 AppID 串行化写入、
 临时文件替换与 `.bak` 备份。
 
-Group Panel 全链路（issue #4）与 Drift / 发布确认（issue #5）尚未接入；结构化视图的
-群聊面板标签页会提示，GROUP Panel 内容可先用 JSON 模式编辑。
+Drift 检测与统一发布确认（issue #5）、待清理显式重试（issue #6）等尚未接入。
 
 ## 开发
 
