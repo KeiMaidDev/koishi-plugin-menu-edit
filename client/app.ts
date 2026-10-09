@@ -142,6 +142,8 @@ export default defineComponent({
     }
 
     const loadWorkspace = async (appId: string) => {
+      // 切换/重载会替换整段文本，先取消尚未触发的自动保存，避免用新 AppID 提交旧内容。
+      cancelAutoSave()
       state.loading = true
       try {
         const snapshot: WorkspaceSnapshot = await api.fetchWorkspace(appId)
@@ -216,8 +218,14 @@ export default defineComponent({
       state.text = value
       state.conflict = null
       state.error = ''
-      state.status = value === state.savedText ? 'saved' : 'unsaved'
-      if (state.status === 'unsaved') scheduleAutoSave()
+      if (value === state.savedText) {
+        // 文本改回已保存内容时取消排队的自动保存，避免无变更却递增 revision。
+        cancelAutoSave()
+        state.status = 'saved'
+        return
+      }
+      state.status = 'unsaved'
+      scheduleAutoSave()
     }
 
     const formatJson = () => {
@@ -381,4 +389,3 @@ export default defineComponent({
     }
   },
 })
-

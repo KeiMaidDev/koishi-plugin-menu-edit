@@ -77,7 +77,7 @@ export interface MenuState {
   revision: number
   updatedAt: string
   /** 首次导入后的初始 Panel Configuration；尚未导入时为 null。 */
-  initial: PanelConfiguration | null
+  importedConfiguration: PanelConfiguration | null
   /** 正在编辑、尚未发布的 Panel Configuration。 */
   draft: PanelConfiguration
   /** 两个 surface 最近一次成功发布的内容。 */
@@ -90,7 +90,7 @@ export interface WorkspaceSnapshot {
   revision: number
   updatedAt: string
   draft: PanelConfiguration
-  initial: PanelConfiguration | null
+  importedConfiguration: PanelConfiguration | null
   published: PublishedRevisions
 }
 
@@ -141,6 +141,6 @@ export function emptyPanelConfiguration(): PanelConfiguration {
 }
 
 /** 深拷贝，保证调用方拿到的快照与内部状态互不影响。 */
-export function clonePanelConfiguration(configuration: PanelConfiguration): PanelConfiguration {
-  return JSON.parse(JSON.stringify(configuration)) as PanelConfiguration
+export function deepClone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
 }

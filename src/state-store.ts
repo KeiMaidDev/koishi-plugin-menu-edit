@@ -7,6 +7,7 @@
  */
 import { promises as fs } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { isRecord } from './guards'
 import { MENU_STATE_SCHEMA_VERSION, type MenuState } from './types'
 
 export type MenuStateStoreErrorReason = 'state-unreadable' | 'state-write-failed'
@@ -29,10 +30,6 @@ export interface MenuStateStoreOptions {
   renameRetries?: number
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 function parseState(raw: string): MenuState | null {
   const parsed: unknown = JSON.parse(raw)
   if (!isRecord(parsed)) return null
@@ -41,7 +38,7 @@ function parseState(raw: string): MenuState | null {
   if (typeof parsed.revision !== 'number' || !Number.isInteger(parsed.revision) || parsed.revision < 0) return null
   if (typeof parsed.updatedAt !== 'string') return null
   if (!isRecord(parsed.draft)) return null
-  if (parsed.initial !== null && !isRecord(parsed.initial)) return null
+  if (parsed.importedConfiguration !== null && !isRecord(parsed.importedConfiguration)) return null
   if (!isRecord(parsed.published)) return null
   return parsed as unknown as MenuState
 }
@@ -159,4 +156,3 @@ export class MenuStateStore {
     }
   }
 }
-

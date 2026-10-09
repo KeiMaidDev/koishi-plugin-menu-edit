@@ -40,7 +40,7 @@ export function makeState(appId: string, overrides: Partial<MenuState> = {}): Me
     appId,
     revision: 3,
     updatedAt: '2026-10-10T00:00:00.000Z',
-    initial: null,
+    importedConfiguration: null,
     draft: emptyPanelConfiguration(),
     published: { privateMenu: null, groupPanel: null },
     ...overrides,
@@ -73,3 +73,4 @@ export function createHarness(bots: FakeBot[] = DEFAULT_BOTS, now?: () => Date):
     cleanup: () => rmSync(dataDir, { recursive: true, force: true }),
   }
 }
+

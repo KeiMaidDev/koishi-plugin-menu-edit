@@ -8,11 +8,9 @@
 import type { BotRegistry } from './bot-registry'
 import { normalizePanelConfiguration } from './configuration'
 import type { MenuStateStore } from './state-store'
+import { advanceDraft, createInitialState, recordedConfiguration } from './state'
 import {
-  emptyGroupPanel,
-  emptyPanelConfiguration,
-  emptyPrivateMenu,
-  MENU_STATE_SCHEMA_VERSION,
+  deepClone,
   type BotInstanceSummary,
   type DiscardDraftInput,
   type DraftMutationResult,
@@ -40,22 +38,6 @@ export interface MenuServiceOptions {
   store: MenuStateStore
   /** 注入时钟，便于测试断言 revision 与时间戳。 */
   now?: () => Date
-}
-
-function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T
-}
-
-function createInitialState(appId: string, now: string): MenuState {
-  return {
-    schemaVersion: MENU_STATE_SCHEMA_VERSION,
-    appId,
-    revision: 0,
-    updatedAt: now,
-    initial: null,
-    draft: emptyPanelConfiguration(),
-    published: { privateMenu: null, groupPanel: null },
-  }
 }
 
 export class MenuService {
@@ -97,42 +79,31 @@ export class MenuService {
   async saveDraft(input: SaveDraftInput): Promise<DraftMutationResult> {
     this.requireBot(input.appId)
     const configuration = normalizePanelConfiguration(input.configuration)
-    return this.store.runExclusive(input.appId, async () => {
-      const state = await this.readOrCreate(input.appId)
-      const conflict = this.conflictOf(state, input.expectedRevision)
-      if (conflict) return conflict
+    return this.mutateDraft(input.appId, input.expectedRevision, () => configuration)
+  }
 
-      const next: MenuState = {
-        ...state,
-        revision: state.revision + 1,
-        updatedAt: this.now().toISOString(),
-        draft: configuration,
-      }
-      await this.store.write(input.appId, next)
-      return { ok: true, revision: next.revision, savedAt: next.updatedAt }
-    })
+  /** Discard Draft：用已记录内容覆盖 Draft，同样带 revision 校验。 */
+  async discardDraft(input: DiscardDraftInput): Promise<DraftMutationResult> {
+    this.requireBot(input.appId)
+    return this.mutateDraft(input.appId, input.expectedRevision, recordedConfiguration)
   }
 
   /**
-   * Discard Draft：用「已记录内容」覆盖 Draft。
-   *
-   * 已记录内容按 surface 取最近一次成功的 Published Revision；尚未发布过的 surface
-   * 回退到首次导入内容，两者都没有时回到空配置。Discard 同样带 revision 校验。
+   * 所有 Draft 变更共用的 read-modify-write：读取、校验 revision、计算新 Draft、
+   * 递增 revision 并写入，整段在一个 AppID 的互斥段内完成。
    */
-  async discardDraft(input: DiscardDraftInput): Promise<DraftMutationResult> {
-    this.requireBot(input.appId)
-    return this.store.runExclusive(input.appId, async () => {
-      const state = await this.readOrCreate(input.appId)
-      const conflict = this.conflictOf(state, input.expectedRevision)
+  private mutateDraft(
+    appId: string,
+    expectedRevision: number,
+    computeDraft: (state: MenuState) => PanelConfiguration,
+  ): Promise<DraftMutationResult> {
+    return this.store.runExclusive(appId, async () => {
+      const state = await this.readOrCreate(appId)
+      const conflict = this.conflictOf(state, expectedRevision)
       if (conflict) return conflict
 
-      const next: MenuState = {
-        ...state,
-        revision: state.revision + 1,
-        updatedAt: this.now().toISOString(),
-        draft: this.recordedConfiguration(state),
-      }
-      await this.store.write(input.appId, next)
+      const next = advanceDraft(state, computeDraft(state), this.now().toISOString())
+      await this.store.write(appId, next)
       return { ok: true, revision: next.revision, savedAt: next.updatedAt }
     })
   }
@@ -159,16 +130,7 @@ export class MenuService {
       ok: false,
       reason: 'revision-conflict',
       revision: state.revision,
-      draft: clone(state.draft),
-    }
-  }
-
-  private recordedConfiguration(state: MenuState): PanelConfiguration {
-    const fallback = state.initial ?? emptyPanelConfiguration()
-    return {
-      ...clone(fallback),
-      privateMenu: clone(state.published.privateMenu?.menu ?? fallback.privateMenu ?? emptyPrivateMenu()),
-      groupPanel: clone(state.published.groupPanel?.panel ?? fallback.groupPanel ?? emptyGroupPanel()),
+      draft: deepClone(state.draft),
     }
   }
 
@@ -177,10 +139,9 @@ export class MenuService {
       bot: { ...bot },
       revision: state.revision,
       updatedAt: state.updatedAt,
-      draft: clone(state.draft),
-      initial: state.initial ? clone(state.initial) : null,
-      published: clone<PublishedRevisions>(state.published),
+      draft: deepClone(state.draft),
+      importedConfiguration: state.importedConfiguration ? deepClone(state.importedConfiguration) : null,
+      published: deepClone<PublishedRevisions>(state.published),
     }
   }
 }
-

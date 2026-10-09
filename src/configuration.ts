@@ -4,6 +4,7 @@
  * 这里只做「是不是一份可以保存的配置」这一层结构校验：非法 JSON 由客户端在解析时拦截，
  * 菜单项的字段级校验留给 Publish 前的 validation。未知字段一律保留，结构化编辑不会把它们删掉。
  */
+import { isRecord } from './guards'
 import {
   emptyGroupPanel,
   emptyPrivateMenu,
@@ -21,10 +22,6 @@ export class MenuConfigurationError extends Error {
     super(message)
     this.name = 'MenuConfigurationError'
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function normalizePrivateMenu(value: unknown): PrivateMenuConfiguration {
@@ -66,4 +63,3 @@ export function normalizePanelConfiguration(value: unknown): PanelConfiguration 
     groupPanel: normalizeGroupPanel(value.groupPanel),
   }
 }
-

@@ -155,7 +155,7 @@ describe('MenuService：Discard Draft', () => {
     const dirty = configuration({ privateMenu: { items: [{ name: '草稿' }] } })
     await instance.store.write('100', makeState('100', {
       revision: 4,
-      initial,
+      importedConfiguration: initial,
       draft: dirty,
     }))
 
@@ -175,7 +175,7 @@ describe('MenuService：Discard Draft', () => {
     const publishedPrivateMenu = { items: [{ name: '已发布', type: 'send_message', send_message: '/published' }] }
     await instance.store.write('100', makeState('100', {
       revision: 7,
-      initial,
+      importedConfiguration: initial,
       draft: configuration({ privateMenu: { items: [{ name: '本地草稿' }] } }),
       published: {
         privateMenu: {
@@ -241,4 +241,5 @@ describe('MenuService：多 AppID 隔离', () => {
     assert.equal((await service.loadWorkspace('100')).revision, 2)
   })
 })
+
 
