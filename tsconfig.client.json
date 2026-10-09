@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "strict": true,
+    "types": ["node"],
+    "paths": {
+      "@koishijs/client": ["./client/env.d.ts"]
+    }
+  },
+  "include": ["client", "src/types.ts", "src/console-permission.ts"]
+}
