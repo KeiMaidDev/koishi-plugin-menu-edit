@@ -138,6 +138,14 @@ describe('validation：警告类确认项', () => {
     })
     assert.ok(result.warnings.some(issue => issue.code === 'command-panel.item.desc-empty'))
     assert.equal(result.errors.length, 0)
+
+    // link 条目不要求指令描述，空 desc 不产生警告。
+    const link = validatePanelConfiguration({
+      privateMenu: { items: [] },
+      commandPanel: { items: [{ name: '官网', type: 'link', link: 'https://example.com', scopes: ['group'] }] },
+    })
+    assert.ok(!link.warnings.some(issue => issue.code === 'command-panel.item.desc-empty'))
+    assert.equal(link.errors.length, 0)
   })
 })
 

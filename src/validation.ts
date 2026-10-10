@@ -282,10 +282,13 @@ export function validateCommandPanel(panel: CommandPanelConfiguration): Validati
     } else if (typeof item.name === 'string' && item.name.trim() && !item.name.trim().startsWith('/')) {
       issues.push(error('command-panel.item.command-prefix', `${path}.name`, '指令类型条目的名称必须以 / 开头。'))
     }
-    if (!isNonEmptyString(item.desc)) {
-      issues.push(warning('command-panel.item.desc-empty', `${path}.desc`, '面板条目的描述为空。'))
-    } else if (displayWidth(item.desc) > 30) {
-      issues.push(error('command-panel.item.desc-too-wide', `${path}.desc`, '描述展示宽度超过约 30 个字符。'))
+    // 链接条目没有指令介绍字段，空描述警告只针对 command 类型。
+    if (type === 'command') {
+      if (!isNonEmptyString(item.desc)) {
+        issues.push(warning('command-panel.item.desc-empty', `${path}.desc`, '面板条目的描述为空。'))
+      } else if (displayWidth(item.desc) > 30) {
+        issues.push(error('command-panel.item.desc-too-wide', `${path}.desc`, '描述展示宽度超过约 30 个字符。'))
+      }
     }
   })
 
