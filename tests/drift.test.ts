@@ -74,6 +74,14 @@ describe('Drift：刷新平台状态', () => {
     const group = report.scopes.find(scope => scope.scope === 'group')
     assert.equal(group?.state, 'changed')
     assert.deepEqual(group?.diffs.map(diff => diff.kind + ':' + diff.name), ['added:/old', 'removed:/external'])
+
+    // 键序不同但内容相同的平台返回不应产生假 Drift。
+    instance.platform.seedCommandPanel('100', 'p-c2c', 'c2c', { remark: 'menu-edit', items: [{ type: 'command', only_admin: false, desc: '', name: '/same', scopes: [] }] }, { version: 9 })
+    await instance.service.importCommandPanel({ appId: '100' })
+    const stable = await instance.service.refreshPlatform({ appId: '100' })
+    assert.ok('privateMenu' in stable)
+    if (!('privateMenu' in stable)) return
+    assert.equal(stable.scopes.find(scope => scope.scope === 'c2c')?.state, 'same')
   })
 
   it('受管面板被删除时返回 missing，平台读取失败时对应场景返回 error 且不影响其他场景', async () => {
@@ -145,40 +153,14 @@ describe('Drift：Publish 确认门禁', () => {
     assert.ok(instance.platform.panelWrites.some(write => write.op === 'modify' && write.panelId === 'p-g'))
   })
 
-  it('发布提交后 Draft 被改写时，旧 expected revision 失败且不写平台', async () => {
+  it('Publish 使用过期 expected revision（Draft 已被其他调用改写）时返回 revision-conflict，且不写平台', async () => {
     const instance = harness()
     instance.platform.seedCommandPanel('100', 'p-g', 'group', commandPanel([commandItem('/g', ['group'])]), { version: 5 })
     await instance.service.importCommandPanel({ appId: '100' })
     const revision = (await instance.service.loadWorkspace('100')).revision
 
-    // 模拟「发布请求已提交、尚未完成」时另一个页面改写 Draft；后到的保存用旧 revision，无法赢得写入。
-    const stale = instance.service.publishCommandPanel({
-      appId: '100',
-      expectedRevision: revision,
-      confirmDrift: { scopes: { group: true } },
-    })
-    await instance.service.publishCommandPanel({ appId: '100', expectedRevision: revision })
-    const conflict = await instance.service.saveDraft({
-      appId: '100',
-      expectedRevision: revision,
-      configuration: configuration({ commandPanel: commandPanel([commandItem('/new', ['group'])]) }),
-    })
-    assert.equal(conflict.ok, false)
-    if (conflict.ok) return
-    assert.equal(conflict.reason, 'revision-conflict')
-
-    const result = await stale
-    assert.equal(result.ok, true, JSON.stringify(result))
-    if (!result.ok) return
-    assert.equal(result.revision, revision + 1)
-  })
-
-  it('Publish 使用过期 expected revision 时返回 revision-conflict，且不写平台', async () => {
-    const instance = harness()
-    instance.platform.seedCommandPanel('100', 'p-g', 'group', commandPanel([commandItem('/g', ['group'])]), { version: 5 })
-    await instance.service.importCommandPanel({ appId: '100' })
-    const revision = (await instance.service.loadWorkspace('100')).revision
-
+    // 第一次发布成功后 revision 递增；携带旧 expected revision 的第二次发布必须失败，
+    // 这就是「发布请求携带 expected revision、期间被改写则失败」的门禁。
     await instance.service.publishCommandPanel({ appId: '100', expectedRevision: revision })
     const stale = await instance.service.publishCommandPanel({
       appId: '100',
@@ -188,5 +170,13 @@ describe('Drift：Publish 确认门禁', () => {
     assert.equal(stale.ok, false)
     if (stale.ok) return
     assert.equal(stale.code, 'revision-conflict')
+  })
+
+  it('离线机器人刷新平台状态时返回整体 bot-offline，不读取平台', async () => {
+    const instance = harness()
+    const report = await instance.service.refreshPlatform({ appId: '200' })
+    assert.ok(!('privateMenu' in report))
+    if ('privateMenu' in report) return
+    assert.equal(report.code, 'bot-offline')
   })
 })

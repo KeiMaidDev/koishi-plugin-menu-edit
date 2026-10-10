@@ -1,6 +1,6 @@
 import { message, messageBox } from '@koishijs/client'
 import { defineComponent, h, onBeforeUnmount, onMounted, reactive, resolveComponent } from 'vue'
-import { emptyPanelConfiguration, PANEL_SCOPES, PANEL_SCOPE_LABELS, type BotInstanceSummary, type CommandPanelCandidate, type CommandPanelPublishResult, type CommandPanelScopeCandidates, type DraftRevisionConflict, type DriftReport, type PanelConfiguration, type PanelScope, type PrivateMenuPublishResult, type ValidationIssue, type WorkspaceSnapshot } from '../src/types'
+import { emptyPanelConfiguration, PANEL_SCOPES, PANEL_SCOPE_LABELS, type BotInstanceSummary, type CommandPanelCandidate, type CommandPanelPublishResult, type CommandPanelScopeCandidates, type DraftRevisionConflict, type DriftReport, type DriftState, type MenuItemDiff, type PanelConfiguration, type PanelScope, type PrivateMenuPublishResult, type ValidationIssue, type WorkspaceSnapshot } from '../src/types'
 import { validatePanelConfiguration } from '../src/validation'
 import * as api from './api'
 import { PrivateMenuEditor } from './private-editor'
@@ -65,8 +65,8 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/** Drift 确认框文案：按 Private Menu 与四个使用场景分组展示差异摘要。 */
-function driftStateLabel(report: { state: string }): string {
+/** Drift 状态的页面文案；按状态机枚举，未知值不会落入。 */
+function driftStateLabel(report: { state: DriftState }): string {
   if (report.state === 'changed') return '内容有变化'
   if (report.state === 'missing') return '面板已不存在'
   if (report.state === 'error') return '读取失败'
@@ -74,6 +74,7 @@ function driftStateLabel(report: { state: string }): string {
   return '一致'
 }
 
+/** Drift 确认框文案：按 Private Menu 与四个使用场景分组展示差异摘要。 */
 function formatDriftSummary(report: DriftReport): string {
   const sections: string[] = []
   const privateReport = report.privateMenu
@@ -89,7 +90,7 @@ function formatDriftSummary(report: DriftReport): string {
   return sections.length ? sections.join('\n') : '平台状态与上次发布一致。'
 }
 
-const DIFF_LABELS: Record<string, (name: string) => string> = {
+const DIFF_LABELS: Record<MenuItemDiff['kind'], (name: string) => string> = {
   added: name => `新增 ${name}`,
   removed: name => `删除 ${name}`,
   modified: name => `修改 ${name}`,
@@ -730,7 +731,6 @@ export default defineComponent({
     let privateDriftConfirmed = false
 
     const publishPrivateMenu = async () => {
-      privateDriftConfirmed = false
       if (!state.activeAppId || state.publishing) return
       if (state.jsonError) {
         state.error = `配置文本解析失败：${state.jsonError}`

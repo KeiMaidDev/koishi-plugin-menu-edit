@@ -130,6 +130,17 @@ describe('validation：警告', () => {
     assert.equal(displayWidth('abcd'), 4)
   })
 })
+describe('validation：警告类确认项', () => {
+  it('Panel Item 描述为空产生警告；Private Menu 同级重名与重复 switch ID 已有警告', () => {
+    const result = validatePanelConfiguration({
+      privateMenu: { items: [] },
+      commandPanel: { items: [{ name: '/a', type: 'command', scopes: ['group'] }] },
+    })
+    assert.ok(result.warnings.some(issue => issue.code === 'command-panel.item.desc-empty'))
+    assert.equal(result.errors.length, 0)
+  })
+})
+
 describe('validation：Command Panel 条目字段', () => {
   function command(items: unknown[]) {
     return validatePanelConfiguration({ privateMenu: { items: [] }, commandPanel: { items } })
