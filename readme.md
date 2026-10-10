@@ -54,7 +54,46 @@ Publish 单独触发。
 状态文件位于 `<baseDir>/data/menu-edit/<encoded-appId>.json`，采用按 AppID 串行化写入、
 临时文件替换与 `.bak` 备份。
 
-待清理显式重试（issue #6）等尚未接入。
+## 操作说明
+
+### 安装与权限
+
+把构建产物安装到 Koishi 后启用本插件，打开 Console 侧边栏的「Menu Edit」页面即可使用。
+页面与所有读取/写入 RPC 均要求 `authority: 4`，普通用户（authority 3 及以下）无法访问页面或触发任何操作。
+
+### 选择 Bot Instance
+
+页面顶部只列出 `platform === 'qq'` 的 Bot Instance（显示头像、名称、AppID 与在线状态）。
+通过头部下拉切换目标 Bot，Draft、revision、Drift 与写入队列均按 AppID 隔离，互不串扰。
+
+### 导入
+
+- 导入私聊菜单：点击「导入」读取当前平台的 Private Menu；读取失败会显示错误并允许重试，不会用空配置静默覆盖 Draft。
+- 导入指令面板：首次导入按 channel / dm / group / c2c 四个场景分页拉取 all 面板候选；零候选留空，单候选自动接管，多候选时由用户为每个场景选择唯一接管对象。同场景其他 all 面板记为待清理对象。
+
+### 编辑与预览
+
+- Private Menu 编辑器支持 `send_message`、`link`、`menu`、`switch` 四类条目的增删、复制、排序与子菜单编辑。
+- Command Panel 编辑器支持 command / link 条目；指令名固定 `/` 前缀，可设置权限菜单和使用场景（可多选）。编辑区顶部显示各场景的条目计数与单场景 20 条上限。
+- 两种编辑模式（结构化 / JSON）双向同步。预览不修改 Draft，手机外壳模拟真实聊天效果，可在四个使用场景之间切换。
+
+### Publish
+
+1. 确认 Draft 内容无误后点击「Publish」。
+2. 发布前会按场景列出其他 all 面板并要求确认（成功写入后逐项清理）。
+3. 发布按场景串行写入，间隔至少 6500ms；某场景失败不阻断其他场景，结果按场景聚合为成功 / 失败 / partial。
+4. Private Menu 通过 `setMenu` 整体覆盖写入；失败时保留 Draft 与旧 Published Revision。
+
+### 刷新与 Drift
+
+点击「刷新平台状态」手动读取平台内容并与 Draft / Published 对比，按
+未发布 / 一致 / 有变化 / 面板缺失 / 读取失败 展示 Drift。
+Drift 不阻止发布，但存在 Drift 时必须先确认才能 Publish。
+
+### 待清理恢复
+
+某场景清理部分失败时，该场景标记为 partial，失败的 panel ID 会持久化。
+页面显示「仍有待清理面板」并提供重试按钮，再次点击可继续清理，不需要重新发布。
 
 ## 开发
 
