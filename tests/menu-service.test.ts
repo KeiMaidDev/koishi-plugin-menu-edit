@@ -372,7 +372,12 @@ describe('MenuService：Publish Private Menu', () => {
     }))
     instance.platform.setError = new MenuPlatformError('platform-error', '写入失败')
 
-    const result = await instance.service.publishPrivateMenu({ appId: '100', expectedRevision: 5 })
+    // Drift 已确认后进入平台写入；这里验证写入失败不改动本地状态。
+    const result = await instance.service.publishPrivateMenu({
+      appId: '100',
+      expectedRevision: 5,
+      confirmDrift: { privateMenu: true },
+    })
     assert.equal(result.ok, false)
     if (result.ok) return
     assert.equal(result.code, 'platform-error')

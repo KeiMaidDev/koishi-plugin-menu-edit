@@ -15,6 +15,8 @@ import type {
   DiscardDraftInput,
   DraftMutationResult,
   CommandPanelPublishInput,
+  RefreshPlatformInput,
+  RefreshPlatformResult,
   CommandPanelPublishResult,
   ImportCommandPanelInput,
   ImportCommandPanelResult,
@@ -32,6 +34,7 @@ declare module '@koishijs/console' {
     'menu-edit/workspace'(appId: string): Promise<WorkspaceSnapshot>
     'menu-edit/save-draft'(input: SaveDraftInput): Promise<DraftMutationResult>
     'menu-edit/discard-draft'(input: DiscardDraftInput): Promise<DraftMutationResult>
+    'menu-edit/refresh-platform'(input: RefreshPlatformInput): Promise<RefreshPlatformResult>
     'menu-edit/import-private-menu'(input: ImportPrivateMenuInput): Promise<ImportPrivateMenuResult>
     'menu-edit/publish-private-menu'(input: PrivateMenuPublishInput): Promise<PrivateMenuPublishResult>
     'menu-edit/import-command-panel'(input: ImportCommandPanelInput): Promise<ImportCommandPanelResult>
@@ -104,6 +107,9 @@ export const setupConsole = Object.assign(
 
     ctx.console.addListener(`${CONSOLE_API_PREFIX}/discard-draft`, (input) =>
       run('Discard Draft', () => service.discardDraft(input as DiscardDraftInput)), requireAuthority)
+
+    ctx.console.addListener(`${CONSOLE_API_PREFIX}/refresh-platform`, (input) =>
+      run('刷新平台状态', () => service.refreshPlatform(input as RefreshPlatformInput)), requireAuthority)
 
     ctx.console.addListener(`${CONSOLE_API_PREFIX}/import-private-menu`, (input) =>
       run('导入 Private Menu', () => service.importPrivateMenu(input as ImportPrivateMenuInput)), requireAuthority)

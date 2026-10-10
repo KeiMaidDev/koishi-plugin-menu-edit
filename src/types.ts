@@ -213,6 +213,56 @@ export interface ValidationResult {
   warnings: ValidationIssue[]
 }
 
+/** Private Menu / 单个使用场景面板的条目差异摘要。 */
+export interface MenuItemDiff {
+  kind: 'added' | 'removed' | 'modified'
+  name: string
+}
+
+/** Drift 状态：未发布过、平台一致、内容有差异、平台对象缺失或读取失败。 */
+export type DriftState = 'unpublished' | 'same' | 'changed' | 'missing' | 'error'
+
+/** Private Menu 的 Drift 读取结果。 */
+export interface PrivateMenuDriftReport {
+  surface: 'privateMenu'
+  state: DriftState
+  /** 仅 state === changed 时有内容；added / removed / modified 按 Draft 视角。 */
+  diffs: MenuItemDiff[]
+  /** 仅 state === error 时给出可展示信息。 */
+  message?: string
+}
+
+/** 单个使用场景的 Drift 读取结果。 */
+export interface ScopeDriftReport {
+  surface: 'commandPanel'
+  scope: PanelScope
+  state: DriftState
+  /** 仅 state === changed 时有内容；added / removed / modified 按 Draft 派生内容视角。 */
+  diffs: MenuItemDiff[]
+  /** 仅 state === error 时给出可展示信息。 */
+  message?: string
+}
+
+/** 手动刷新平台状态后返回的完整 Drift 快照。 */
+export interface DriftReport {
+  privateMenu: PrivateMenuDriftReport
+  scopes: ScopeDriftReport[]
+}
+
+/** 页面刷新 Platform State 的请求。 */
+export interface RefreshPlatformInput {
+  appId: string
+}
+
+/** 刷新平台状态失败（bot 缺失 / 离线 / 平台错误）。 */
+export interface RefreshPlatformFailure {
+  ok: false
+  code: 'unknown-bot' | 'bot-offline' | 'platform-error'
+  message: string
+}
+
+export type RefreshPlatformResult = DriftReport | RefreshPlatformFailure
+
 /** 导入当前 Private Menu 的请求。 */
 export interface ImportPrivateMenuInput {
   appId: string
@@ -242,6 +292,14 @@ export const PUBLISH_PRIVATE_MENU_SURFACE = 'privateMenu' as const
 export interface PrivateMenuPublishInput {
   appId: string
   expectedRevision: number
+  /** Drift 确认；存在 Drift 时必须显式确认才允许覆盖平台现状。 */
+  confirmDrift?: PublishConfirmations
+}
+
+/** Publish 确认：键存在且为 true 表示用户已确认对应类别的差异。 */
+export interface PublishConfirmations {
+  privateMenu?: boolean
+  scopes?: Partial<Record<PanelScope, boolean>>
 }
 
 export interface PrivateMenuPublishSuccess {
@@ -258,6 +316,7 @@ export type PrivateMenuPublishFailureCode =
   | 'bot-offline'
   | 'revision-conflict'
   | 'validation-failed'
+  | 'drift-confirmation-required'
   | 'platform-error'
 
 export interface PrivateMenuPublishFailure {
@@ -270,6 +329,8 @@ export interface PrivateMenuPublishFailure {
   revision: number
   draft: PanelConfiguration
   published: PublishedPrivateMenu | null
+  /** 仅 drift-confirmation-required 时携带完整 Drift 快照。 */
+  drift?: DriftReport
 }
 
 export type PrivateMenuPublishResult = PrivateMenuPublishSuccess | PrivateMenuPublishFailure
@@ -368,6 +429,8 @@ export interface CommandPanelPublishInput {
   expectedRevision: number
   /** 场景 -> 用户已确认删除的 panelId。 */
   cleanupPanelIds?: Partial<Record<PanelScope, string[]>>
+  /** Drift 确认；存在 Drift 时必须显式确认才允许写入。 */
+  confirmDrift?: PublishConfirmations
 }
 
 export type CommandPanelPublishFailureCode =
@@ -375,6 +438,7 @@ export type CommandPanelPublishFailureCode =
   | 'bot-offline'
   | 'revision-conflict'
   | 'validation-failed'
+  | 'drift-confirmation-required'
   | 'platform-error'
   | 'quantity-limit'
   | 'cleanup-confirmation-required'
@@ -404,6 +468,8 @@ export interface CommandPanelPublishFailure {
   published: PublishedCommandPanels
   /** cleanup-confirmation-required 时按场景列出待确认删除的面板，其余为空数组。 */
   candidates: CommandPanelScopeCandidates[]
+  /** 仅 drift-confirmation-required 时携带完整 Drift 快照。 */
+  drift?: DriftReport
 }
 
 export type CommandPanelPublishResult = CommandPanelPublishSuccess | CommandPanelPublishFailure

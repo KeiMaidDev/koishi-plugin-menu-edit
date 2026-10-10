@@ -48,6 +48,7 @@ describe('Menu Edit Console：权限与入口', () => {
       'menu-edit/workspace',
       'menu-edit/save-draft',
       'menu-edit/discard-draft',
+      'menu-edit/refresh-platform',
       'menu-edit/import-private-menu',
       'menu-edit/publish-private-menu',
       'menu-edit/import-command-panel',

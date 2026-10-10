@@ -4,6 +4,8 @@ import type {
   DiscardDraftInput,
   DraftMutationResult,
   CommandPanelPublishInput,
+  RefreshPlatformInput,
+  RefreshPlatformResult,
   CommandPanelPublishResult,
   ImportCommandPanelInput,
   ImportCommandPanelResult,
@@ -21,6 +23,8 @@ export type {
   DraftMutationResult,
   DraftRevisionConflict,
   CommandPanelCandidate,
+  DriftReport,
+  MenuItemDiff,
   CommandPanelItemType,
   CommandPanelPublishInput,
   CommandPanelPublishResult,
@@ -44,6 +48,8 @@ export const fetchWorkspace = (appId: string) => send<WorkspaceSnapshot>('menu-e
 export const saveDraft = (input: SaveDraftInput) => send<DraftMutationResult>('menu-edit/save-draft', input)
 export const discardDraft = (input: DiscardDraftInput) =>
   send<DraftMutationResult>('menu-edit/discard-draft', input)
+export const refreshPlatform = (input: RefreshPlatformInput) =>
+  send<RefreshPlatformResult>('menu-edit/refresh-platform', input)
 export const importPrivateMenu = (input: ImportPrivateMenuInput) =>
   send<ImportPrivateMenuResult>('menu-edit/import-private-menu', input)
 export const publishPrivateMenu = (input: PrivateMenuPublishInput) =>

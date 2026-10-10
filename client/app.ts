@@ -1,6 +1,6 @@
 import { message, messageBox } from '@koishijs/client'
 import { defineComponent, h, onBeforeUnmount, onMounted, reactive, resolveComponent } from 'vue'
-import { emptyPanelConfiguration, PANEL_SCOPES, PANEL_SCOPE_LABELS, type BotInstanceSummary, type CommandPanelCandidate, type CommandPanelPublishResult, type CommandPanelScopeCandidates, type DraftRevisionConflict, type PanelConfiguration, type PanelScope, type PrivateMenuPublishResult, type ValidationIssue, type WorkspaceSnapshot } from '../src/types'
+import { emptyPanelConfiguration, PANEL_SCOPES, PANEL_SCOPE_LABELS, type BotInstanceSummary, type CommandPanelCandidate, type CommandPanelPublishResult, type CommandPanelScopeCandidates, type DraftRevisionConflict, type DriftReport, type PanelConfiguration, type PanelScope, type PrivateMenuPublishResult, type ValidationIssue, type WorkspaceSnapshot } from '../src/types'
 import { validatePanelConfiguration } from '../src/validation'
 import * as api from './api'
 import { PrivateMenuEditor } from './private-editor'
@@ -40,6 +40,9 @@ interface PanelState {
   importError: string
   importCandidates: CommandPanelScopeCandidates[]
   importSelections: Partial<Record<PanelScope, string>>
+  drift: DriftReport | null
+  driftError: string
+  refreshingPlatform: boolean
   publishMessage: string
   publishIssues: ValidationIssue[]
   tab: TabKey
@@ -60,6 +63,36 @@ function canonical(configuration: PanelConfiguration): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** Drift 确认框文案：按 Private Menu 与四个使用场景分组展示差异摘要。 */
+function driftStateLabel(report: { state: string }): string {
+  if (report.state === 'changed') return '内容有变化'
+  if (report.state === 'missing') return '面板已不存在'
+  if (report.state === 'error') return '读取失败'
+  if (report.state === 'unpublished') return '尚未发布'
+  return '一致'
+}
+
+function formatDriftSummary(report: DriftReport): string {
+  const sections: string[] = []
+  const privateReport = report.privateMenu
+  if (privateReport.state !== 'unpublished') {
+    const diffs = privateReport.diffs.map(diff => DIFF_LABELS[diff.kind](diff.name)).join('；') || privateReport.message || ''
+    sections.push(`私聊菜单：${driftStateLabel(privateReport)}${diffs ? `（${diffs}）` : ''}`)
+  }
+  for (const scope of report.scopes) {
+    if (scope.state === 'unpublished') continue
+    const diffs = scope.diffs.map(diff => DIFF_LABELS[diff.kind](diff.name)).join('；') || scope.message || ''
+    sections.push(`${PANEL_SCOPE_LABELS[scope.scope]}：${driftStateLabel(scope)}${diffs ? `（${diffs}）` : ''}`)
+  }
+  return sections.length ? sections.join('\n') : '平台状态与上次发布一致。'
+}
+
+const DIFF_LABELS: Record<string, (name: string) => string> = {
+  added: name => `新增 ${name}`,
+  removed: name => `删除 ${name}`,
+  modified: name => `修改 ${name}`,
 }
 
 /** 清理确认框里按场景逐项展示待删除面板的 ID、备注、更新时间与条目摘要。 */
@@ -239,6 +272,9 @@ export default defineComponent({
       importError: '',
       importCandidates: [],
       importSelections: {},
+      drift: null,
+      driftError: '',
+      refreshingPlatform: false,
       publishMessage: '',
       publishIssues: [],
       tab: 'private',
@@ -298,6 +334,8 @@ export default defineComponent({
         state.importError = ''
         state.importCandidates = []
         state.importSelections = {}
+        state.drift = null
+        state.driftError = ''
         state.publishMessage = ''
         state.publishIssues = []
       } catch (error) {
@@ -424,6 +462,25 @@ export default defineComponent({
       await loadWorkspace(state.activeAppId)
     }
 
+    /** 手动刷新平台状态并更新 Drift 汇总；失败保留旧状态并显示错误。 */
+    const refreshPlatform = async () => {
+      if (!state.activeAppId || state.refreshingPlatform) return
+      state.refreshingPlatform = true
+      state.driftError = ''
+      try {
+        const result = await api.refreshPlatform({ appId: state.activeAppId })
+        if ('ok' in result && result.ok === false) {
+          state.driftError = `平台状态读取失败：${result.message}`
+          return
+        }
+        state.drift = result as DriftReport
+      } catch (error) {
+        state.driftError = `平台状态读取失败：${errorMessage(error)}`
+      } finally {
+        state.refreshingPlatform = false
+      }
+    }
+
     const forceOverwrite = async () => {
       if (!state.conflict) return
       state.revision = state.conflict.revision
@@ -547,6 +604,7 @@ export default defineComponent({
     const publishCommandPanel = async (
       cleanupPanelIds?: Partial<Record<PanelScope, string[]>>,
       warningsConfirmed = false,
+      driftConfirmations?: { scopes?: Partial<Record<PanelScope, boolean>> },
     ): Promise<void> => {
       if (!state.activeAppId || state.publishing) return
       if (state.jsonError) {
@@ -586,6 +644,7 @@ export default defineComponent({
           appId: state.activeAppId,
           expectedRevision: state.revision,
           cleanupPanelIds,
+          confirmDrift: driftConfirmations,
         })
         if (result.ok) {
           const panels = Object.values(result.published).filter(panel => panel !== undefined)
@@ -633,6 +692,21 @@ export default defineComponent({
             return publishCommandPanel(ids, true)
           }
           state.publishMessage = '已取消清理，草稿未发布。'
+        } else if (result.code === 'drift-confirmation-required' && result.drift) {
+          const changedScopes = result.drift.scopes.filter(scope => scope.state === 'changed' || scope.state === 'missing')
+          try {
+            await messageBox.confirm(
+              `${formatDriftSummary(result.drift)}\n\n平台内容与上次发布不一致，继续发布会覆盖平台现状。`,
+              '确认覆盖平台 Drift',
+              { type: 'warning', confirmButtonText: '覆盖并发布', cancelButtonText: '取消' },
+            )
+          } catch {
+            state.publishMessage = '已取消发布，草稿未变更。'
+            return
+          }
+          const confirmations: Partial<Record<PanelScope, boolean>> = {}
+          for (const scope of changedScopes) confirmations[scope.scope] = true
+          return publishCommandPanel(cleanupPanelIds, warningsConfirmed, { scopes: confirmations })
         } else if (result.code === 'revision-conflict') {
           applyConflict({ ok: false, reason: 'revision-conflict', revision: result.revision, draft: result.draft })
           state.publishMessage = result.message
@@ -653,7 +727,10 @@ export default defineComponent({
 
     const localValidation = () => validatePanelConfiguration(state.configuration)
 
+    let privateDriftConfirmed = false
+
     const publishPrivateMenu = async () => {
+      privateDriftConfirmed = false
       if (!state.activeAppId || state.publishing) return
       if (state.jsonError) {
         state.error = `配置文本解析失败：${state.jsonError}`
@@ -691,6 +768,7 @@ export default defineComponent({
         const result: PrivateMenuPublishResult = await api.publishPrivateMenu({
           appId: state.activeAppId,
           expectedRevision: state.revision,
+          confirmDrift: privateDriftConfirmed ? { privateMenu: true } : undefined,
         })
         if (result.ok) {
           message.success('私聊菜单已发布')
@@ -700,6 +778,19 @@ export default defineComponent({
         } else if (result.code === 'revision-conflict') {
           applyConflict({ ok: false, reason: 'revision-conflict', revision: result.revision, draft: result.draft })
           state.publishMessage = result.message
+        } else if (result.code === 'drift-confirmation-required' && result.drift) {
+          try {
+            await messageBox.confirm(
+              `${formatDriftSummary(result.drift)}\n\n平台内容与上次发布不一致，继续发布会覆盖平台现状。`,
+              '确认覆盖平台 Drift',
+              { type: 'warning', confirmButtonText: '覆盖并发布', cancelButtonText: '取消' },
+            )
+          } catch {
+            state.publishMessage = '已取消发布，草稿未变更。'
+            return
+          }
+          privateDriftConfirmed = true
+          return publishPrivateMenu()
         } else if (result.code === 'validation-failed') {
           state.publishIssues = result.errors
           state.publishMessage = result.message
@@ -751,6 +842,12 @@ export default defineComponent({
     const renderToolbar = () => h('div', { class: 'me-toolbar' }, [
       h('span', { class: ['me-badge', `me-${state.status}`] }, STATUS_TEXT[state.status]),
       h('span', { class: 'me-hint' }, state.activeAppId ? `版本 ${state.revision}` : '未选择 QQ 应用实例'),
+      h('button', {
+        type: 'button',
+        class: 'me-button',
+        disabled: state.loading || state.refreshingPlatform || !state.activeAppId,
+        onClick: () => void refreshPlatform(),
+      }, state.refreshingPlatform ? '刷新中…' : '刷新平台状态'),
       h('span', { class: 'me-spacer' }),
       h('button', {
         type: 'button',
@@ -789,6 +886,26 @@ export default defineComponent({
       const hasError = list.some(issue => issue.severity === 'error')
       return h('div', { class: ['me-alert', hasError ? 'me-alert-error' : 'me-alert-warn'] },
         list.map(issue => h('div', {}, `${issue.severity === 'error' ? '错误' : '警告'} · ${issue.message}`)))
+    }
+
+    const renderDrift = () => {
+      if (state.driftError) {
+        return h('div', { class: 'me-alert me-alert-error' }, [
+          h('span', state.driftError),
+          h('button', { type: 'button', class: 'me-button', disabled: state.refreshingPlatform, onClick: () => void refreshPlatform() }, state.refreshingPlatform ? '刷新中…' : '重试刷新'),
+        ])
+      }
+      if (!state.drift) return null
+      const rows = [state.drift.privateMenu, ...state.drift.scopes]
+      return h('div', { class: 'me-alert me-alert-warn' }, [
+        h('div', {}, '平台状态（Drift）：'),
+        ...rows.map(report => {
+          const scopeLabel = 'scope' in report ? PANEL_SCOPE_LABELS[report.scope] : '私聊菜单'
+          const diffs = report.diffs.map(diff => `${DIFF_LABELS[diff.kind](diff.name)}`).join('、')
+          const detail = report.state === 'error' ? report.message ?? '' : diffs
+          return h('div', { class: 'me-drift-row' }, `${scopeLabel}：${driftStateLabel(report)}${detail ? `（${detail}）` : ''}`)
+        }),
+      ])
     }
 
     const renderImportCandidates = () => state.importCandidates.length
@@ -902,6 +1019,7 @@ export default defineComponent({
         state.error ? h('div', { class: 'me-alert me-alert-error' }, state.error) : null,
         state.importError ? h('div', { class: 'me-alert me-alert-error' }, state.importError) : null,
         renderImportCandidates(),
+        renderDrift(),
         state.publishMessage ? h('div', { class: ['me-alert', state.publishMessage.includes('成功') ? 'me-alert-success' : 'me-alert-warn'] }, state.publishMessage) : null,
         renderBots(),
         state.bots.length ? renderSwitchTabs() : null,

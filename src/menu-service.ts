@@ -6,7 +6,7 @@
  * `MenuStateStore.runExclusive`，revision 校验和写文件必须处在同一个互斥段内。
  */
 import type { BotRegistry } from './bot-registry'
-import { deriveScopePanel, mergePanelItems } from './command-panel'
+import { compareMenuItems, deriveScopeItems, deriveScopePanel, mergePanelItems, panelItemScopes, stripPanelItemScopes } from './command-panel'
 import { normalizePanelConfiguration } from './configuration'
 import { isRecord } from './guards'
 import {
@@ -22,6 +22,7 @@ import {
   deepClone,
   emptyCommandPanel,
   emptyPanelConfiguration,
+  PANEL_SCOPE_LABELS,
   PANEL_SCOPES,
   type BotInstanceSummary,
   type CommandPanelCandidate,
@@ -31,6 +32,7 @@ import {
   type CommandPanelScopeCandidates,
   type CommandPanelScopePublishResult,
   type DiscardDraftInput,
+  type DriftReport,
   type DraftMutationResult,
   type ImportCommandPanelFailure,
   type ImportCommandPanelInput,
@@ -38,13 +40,20 @@ import {
   type ImportPrivateMenuInput,
   type ImportPrivateMenuResult,
   type MenuState,
+  type MenuItemDiff,
+  type PublishedCommandPanel,
   type PanelConfiguration,
   type PanelScope,
+  type PrivateMenuConfiguration,
   type PrivateMenuPublishInput,
   type PrivateMenuPublishResult,
+  type RefreshPlatformFailure,
+  type RefreshPlatformInput,
+  type PrivateMenuDriftReport,
   type PublishedCommandPanels,
   type PublishedRevisions,
   type SaveDraftInput,
+  type ScopeDriftReport,
   type WorkspaceSnapshot,
 } from './types'
 import { validateCommandPanel, validatePrivateMenu } from './validation'
@@ -118,6 +127,96 @@ export class MenuService {
       return (await this.store.read(appId)) ?? createInitialState(appId, this.now().toISOString())
     })
     return this.toSnapshot(bot, state)
+  }
+
+  /**
+   * 刷新 Platform State 并对比 Published Revision（Drift 检测）。
+   *
+   * 只读平台，不写状态；平台读取按 Private Menu 与四个场景分别给出结果，
+   * 读取失败归入该 surface 的 error 状态，不中断其他 surface 的读取。
+   */
+  async refreshPlatform(input: RefreshPlatformInput): Promise<DriftReport | RefreshPlatformFailure> {
+    const bot = this.findBot(input.appId)
+    if (!bot) return { ok: false, code: 'unknown-bot', message: `未找到应用 ID 为 ${input.appId} 的 QQ 应用实例。` }
+    if (!bot.online) return { ok: false, code: 'bot-offline', message: `应用 ID ${input.appId} 的机器人当前不在线。` }
+    if (!this.platform) return { ok: false, code: 'platform-error', message: 'QQ 平台能力不可用。' }
+
+    const state = await this.store.runExclusive(input.appId, async () =>
+      (await this.store.read(input.appId)) ?? createInitialState(input.appId, this.now().toISOString()))
+
+    const privateMenuReport = await this.readPrivateMenuDrift(input.appId, state)
+    const scopes: ScopeDriftReport[] = []
+    for (const scope of PANEL_SCOPES) {
+      scopes.push(await this.readScopeDrift(input.appId, scope, state))
+    }
+    return { privateMenu: privateMenuReport, scopes }
+  }
+
+  /** Private Menu Drift：读取平台并与 Published Revision 对比。 */
+  private async readPrivateMenuDrift(appId: string, state: MenuState): Promise<PrivateMenuDriftReport> {
+    let platform: PlatformPrivateMenu
+    try {
+      platform = await this.platform!.getPrivateMenu(appId)
+    } catch (error) {
+      return {
+        surface: 'privateMenu',
+        state: 'error',
+        diffs: [],
+        message: `平台私聊菜单读取失败：${errorMessage(error)}`,
+      }
+    }
+
+    const published = state.published.privateMenu
+    if (!published) {
+      return { surface: 'privateMenu', state: 'unpublished', diffs: [] }
+    }
+    if (samePrivateMenu(platform.menu, published.menu)) {
+      return { surface: 'privateMenu', state: 'same', diffs: [] }
+    }
+    return {
+      surface: 'privateMenu',
+      state: 'changed',
+      diffs: compareMenuItems(state.draft.privateMenu.items, platform.menu.items),
+    }
+  }
+
+  /** 单个场景 Drift：读取平台并与 Published Revision 对比。 */
+  private async readScopeDrift(appId: string, scope: PanelScope, state: MenuState): Promise<ScopeDriftReport> {
+    let panels: PlatformCommandPanel[]
+    try {
+      panels = await this.platform!.listCommandPanels(appId, scope)
+    } catch (error) {
+      return {
+        surface: 'commandPanel',
+        scope,
+        state: 'error',
+        diffs: [],
+        message: `${PANEL_SCOPE_LABELS[scope]} 场景面板读取失败：${errorMessage(error)}`,
+      }
+    }
+
+    const published = state.published.commandPanels[scope]
+    if (!published) return { surface: 'commandPanel', scope, state: 'unpublished', diffs: [] }
+
+    const platformPanel = panels.find(panel => panel.targetType === 'all' && panel.panelId === published.panelId)
+    if (!platformPanel) return { surface: 'commandPanel', scope, state: 'missing', diffs: [] }
+
+    const draftItems = deriveScopeItems(state.draft.commandPanel, scope)
+    const platformItems = platformPanel.panel.items
+    if (samePanelItems(platformItems, published.panel.items)) {
+      return { surface: 'commandPanel', scope, state: 'same', diffs: [] }
+    }
+
+    const baseline = compareMenuItems(draftItems, published.panel.items)
+    const drift = compareMenuItems(draftItems, platformItems)
+    const sameDiff = (a: MenuItemDiff, b: MenuItemDiff) => a.kind === b.kind && a.name === b.name
+    const unchanged = baseline.length === drift.length && baseline.every((diff, index) => sameDiff(diff, drift[index]))
+    return {
+      surface: 'commandPanel',
+      scope,
+      state: unchanged ? 'same' : 'changed',
+      diffs: drift,
+    }
   }
 
   /**
@@ -230,6 +329,38 @@ export class MenuService {
           revision: state.revision,
           draft: deepClone(state.draft),
           published: deepClone(state.published.privateMenu),
+        }
+      }
+
+      // Publish 前读取 Platform State；存在 Drift 时必须由用户显式确认才允许覆盖。
+      let platformMenu: PlatformPrivateMenu
+      try {
+        platformMenu = await this.platform!.getPrivateMenu(input.appId)
+      } catch (error) {
+        return {
+          ok: false as const,
+          surface: 'privateMenu' as const,
+          code: platformFailureCode(error),
+          message: `发布前读取平台私聊菜单失败：${errorMessage(error)}`,
+          errors: [],
+          revision: state.revision,
+          draft: deepClone(state.draft),
+          published: deepClone(state.published.privateMenu),
+        }
+      }
+
+      const privateDrift = privateMenuDriftReport(state.draft.privateMenu, platformMenu, state.published.privateMenu)
+      if (privateDrift.state === 'changed' && input.confirmDrift?.privateMenu !== true) {
+        return {
+          ok: false as const,
+          surface: 'privateMenu' as const,
+          code: 'drift-confirmation-required' as const,
+          message: '平台私聊菜单与上次发布内容存在 Drift，请确认后继续发布。',
+          errors: [],
+          revision: state.revision,
+          draft: deepClone(state.draft),
+          published: deepClone(state.published.privateMenu),
+          drift: { privateMenu: privateDrift, scopes: [] },
         }
       }
 
@@ -425,21 +556,54 @@ export class MenuService {
         }
       }
 
-      const plans: ScopePlan[] = []
-      const resultsByScope = new Map<PanelScope, CommandPanelScopePublishResult>()
+      // Publish 前逐场景读取 Platform State，与计划的平台读取共用结果。
+      const platformPanelsByScope = new Map<PanelScope, PlatformCommandPanel[]>()
+      const scopeDrifts: ScopeDriftReport[] = []
       for (const scope of PANEL_SCOPES) {
         let panels: PlatformCommandPanel[]
         try {
           panels = await this.platform!.listCommandPanels(input.appId, scope)
         } catch (error) {
-          resultsByScope.set(scope, {
-            scope,
-            status: 'failed',
-            code: commandPlatformFailureCode(error),
-            message: errorMessage(error),
-          })
-          continue
+          return {
+            ok: false as const,
+            surface: 'commandPanel' as const,
+            code: commandPlatformFailureCode(error) === 'quantity-limit'
+              ? 'platform-error' as const
+              : commandPlatformFailureCode(error),
+            message: `发布前读取 ${PANEL_SCOPE_LABELS[scope]} 场景面板失败：${errorMessage(error)}`,
+            errors: [],
+            revision: state.revision,
+            draft: deepClone(state.draft),
+            published: deepClone(previous),
+            candidates: [],
+          }
         }
+        platformPanelsByScope.set(scope, panels)
+        scopeDrifts.push(scopeDriftReport(scope, panels, state.draft.commandPanel, previous[scope]))
+      }
+
+      const changedScopes = scopeDrifts.filter(report => report.state === 'changed')
+      const confirmedScopes = input.confirmDrift?.scopes ?? {}
+      if (changedScopes.length > 0
+        && !changedScopes.every(report => confirmedScopes[report.scope] === true)) {
+        return {
+          ok: false as const,
+          surface: 'commandPanel' as const,
+          code: 'drift-confirmation-required' as const,
+          message: '平台面板与上次发布内容存在 Drift，请确认后继续发布。',
+          errors: [],
+          revision: state.revision,
+          draft: deepClone(state.draft),
+          published: deepClone(previous),
+          candidates: [],
+          drift: { privateMenu: { surface: 'privateMenu', state: 'unpublished', diffs: [] }, scopes: scopeDrifts },
+        }
+      }
+
+      const plans: ScopePlan[] = []
+      const resultsByScope = new Map<PanelScope, CommandPanelScopePublishResult>()
+      for (const scope of PANEL_SCOPES) {
+        const panels = platformPanelsByScope.get(scope) ?? []
         const allPanels = panels.filter(panel => panel.targetType === 'all')
         const managedId = previous[scope]?.panelId
         const managed = allPanels.find(panel => panel.panelId === managedId)
@@ -739,6 +903,76 @@ function sameScopeListing(
   right: Partial<Record<PanelScope, string[]>>,
 ): boolean {
   return PANEL_SCOPES.every(scope => sameStringSet(left[scope] ?? [], right[scope] ?? []))
+}
+
+/** 未知字段在对比时忽略，已知字段与数量一致视为同内容。 */
+function samePanelItems(left: unknown[], right: unknown[]): boolean {
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index++) {
+    const a = left[index]
+    const b = right[index]
+    if (a === b) continue
+    if (!isRecord(a) || !isRecord(b)) return false
+    const aKeys = Object.keys(a)
+    const bKeys = Object.keys(b)
+    if (aKeys.length !== bKeys.length) return false
+    for (const key of aKeys) {
+      if (!bKeys.includes(key) || JSON.stringify(a[key]) !== JSON.stringify(b[key])) return false
+    }
+  }
+  return true
+}
+
+/** Private Menu Drift 计算；published 缺省时视为未发布过。 */
+function privateMenuDriftReport(
+  draft: PrivateMenuConfiguration,
+  platform: PlatformPrivateMenu,
+  published: PublishedRevisions['privateMenu'],
+): PrivateMenuDriftReport {
+  if (!published) return { surface: 'privateMenu', state: 'unpublished', diffs: [] }
+  if (samePrivateMenu(platform.menu, published.menu)) {
+    return { surface: 'privateMenu', state: 'same', diffs: [] }
+  }
+  const items = Array.isArray(draft.items) ? draft.items : []
+  return {
+    surface: 'privateMenu',
+    state: 'changed',
+    diffs: compareMenuItems(items, platform.menu.items),
+  }
+}
+
+/** 单场景 Drift 计算；平台受管面板缺失视为 missing，读取结果仅用于状态展示。 */
+function scopeDriftReport(
+  scope: PanelScope,
+  platformPanels: PlatformCommandPanel[],
+  draftPanel: CommandPanelConfiguration,
+  publishedPanel: PublishedCommandPanel | undefined,
+): ScopeDriftReport {
+  if (!publishedPanel) return { surface: 'commandPanel', scope, state: 'unpublished', diffs: [] }
+  const platformPanel = platformPanels.find(
+    panel => panel.targetType === 'all' && panel.panelId === publishedPanel.panelId)
+  if (!platformPanel) return { surface: 'commandPanel', scope, state: 'missing', diffs: [] }
+
+  const draftItems = deriveScopeItems(draftPanel, scope)
+  if (samePanelItems(draftItems, platformPanel.panel.items)
+    && samePanelItems(platformPanel.panel.items, publishedPanel.panel.items)) {
+    return { surface: 'commandPanel', scope, state: 'same', diffs: [] }
+  }
+
+  const baseline = compareMenuItems(draftItems, publishedPanel.panel.items)
+  const drift = compareMenuItems(draftItems, platformPanel.panel.items)
+  const sameDiff = (a: MenuItemDiff, b: MenuItemDiff) => a.kind === b.kind && a.name === b.name
+  const unchanged = baseline.length === drift.length && baseline.every((diff, index) => sameDiff(diff, drift[index]))
+  return { surface: 'commandPanel', scope, state: unchanged ? 'same' : 'changed', diffs: drift }
+}
+
+function samePrivateMenu(left: PrivateMenuConfiguration, right: PrivateMenuConfiguration): boolean {
+  const leftItems = Array.isArray(left.items) ? left.items : []
+  const rightItems = Array.isArray(right.items) ? right.items : []
+  if (!samePanelItems(leftItems, rightItems)) return false
+  const leftExtra = { ...left, items: undefined }
+  const rightExtra = { ...right, items: undefined }
+  return JSON.stringify(leftExtra) === JSON.stringify(rightExtra)
 }
 
 function sameStringSet(left: string[], right: string[]): boolean {

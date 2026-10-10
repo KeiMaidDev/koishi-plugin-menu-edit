@@ -42,12 +42,19 @@ Publish 单独触发。
   其余场景从空开始；读到未知的更高版本时拒绝静默覆盖并提示。
 - 平台返回 QQ 错误码 `40030013`（条目数量超限）时返回 `quantity-limit`，保留 Draft 与旧
   Published Revision。
+- 发布安全层（issue #5）：结构化与 JSON 模式共用同一套校验；非法 JSON、数量超限、
+  必填字段缺失、类型错误、非 `https://` 链接与空使用场景阻止 Publish，描述为空、
+  同场景重名、重复 switch ID 与导入同名冲突以警告形式要求确认。
+- 「刷新平台状态」手动读取 Private Menu 与四个使用场景的平台内容，并按
+  未发布 / 一致 / 有变化 / 面板缺失 / 读取失败展示 Drift；平台读取失败不影响其他场景。
+- Drift 不阻止发布，但存在 Drift 时必须先确认；Publish 携带 expected revision，
+  Draft 被其他页面改写时发布失败并要求重新确认。
 - 页面与所有读取/写入 RPC 均要求 `authority: 4`。
 
 状态文件位于 `<baseDir>/data/menu-edit/<encoded-appId>.json`，采用按 AppID 串行化写入、
 临时文件替换与 `.bak` 备份。
 
-Drift 检测与统一发布确认（issue #5）、待清理显式重试（issue #6）等尚未接入。
+待清理显式重试（issue #6）等尚未接入。
 
 ## 开发
 
