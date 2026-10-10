@@ -603,7 +603,9 @@ export class MenuService {
       const nextCommandPanels: PublishedCommandPanels = deepClone(previous)
       let changed = false
       let performedPlatformSuccess = false
+      const ignoredCleanupPanelIds: Partial<Record<PanelScope, string[]>> = {}
 
+      const cleanupFailuresByScope: Partial<Record<PanelScope, Record<string, string>>> = {}
       for (const plan of plans) {
         const { scope } = plan
         let panelId = plan.managed?.panelId
@@ -634,7 +636,16 @@ export class MenuService {
           }
         }
 
-        const remaining = await this.deletePanels(input.appId, plan.deleteTargets.map(panel => panel.panelId))
+        const ignoredPanelIds: string[] = []
+        const cleanupFailures: Record<string, string> = {}
+        const remaining = await this.deletePanels(
+          input.appId,
+          plan.deleteTargets.map(panel => panel.panelId),
+          ignoredPanelIds,
+          cleanupFailures,
+        )
+        if (ignoredPanelIds.length > 0) ignoredCleanupPanelIds[scope] = [...ignoredPanelIds]
+        if (Object.keys(cleanupFailures).length > 0) cleanupFailuresByScope[scope] = { ...cleanupFailures }
         const publishedAt = this.now().toISOString()
 
         if (plan.derived.items.length === 0) {
@@ -663,7 +674,7 @@ export class MenuService {
           panel: deepClone(plan.derived),
           version,
           publishedAt,
-          cleanup: { panelIds: remaining, updatedAt: remaining.length ? publishedAt : null },
+          cleanup: { panelIds: remaining.length ? remaining : [], updatedAt: remaining.length ? publishedAt : null },
         }
         changed = true
         resultsByScope.set(scope, { scope, status: remaining.length > 0 ? 'partial' : 'success' })
@@ -696,18 +707,32 @@ export class MenuService {
         scopeResults,
         revision: nextRevision,
         warnings: validation.warnings,
+        ignoredCleanupPanelIds: deepClone(ignoredCleanupPanelIds),
+        cleanupFailures: deepClone(cleanupFailuresByScope),
       }
     })
   }
 
-  /** 删除一组面板，返回删除失败的 panel ID（保留在待清理列表）。 */
-  private async deletePanels(appId: string, panelIds: string[]): Promise<string[]> {
+  /**
+   * 删除一组面板，返回仍需要重试的 panel ID（保留在待清理列表）。
+   *
+   * QQ 40030006 表示面板已不存在，删除按幂等成功处理并忽略；其余失败保留原 ID，
+   * 并记录稳定错误结果供 UI 展示。
+   */
+  private async deletePanels(
+    appId: string,
+    panelIds: string[],
+    ignored: string[] = [],
+    failures: Record<string, string> = {},
+  ): Promise<string[]> {
     const remaining: string[] = []
     for (const panelId of panelIds) {
       try {
         await this.throttle.run(appId, () => this.platform!.deleteCommandPanel(appId, panelId))
-      } catch {
+        ignored.push(panelId)
+      } catch (error) {
         remaining.push(panelId)
+        failures[panelId] = errorMessage(error)
       }
     }
     return remaining

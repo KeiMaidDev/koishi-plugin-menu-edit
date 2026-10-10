@@ -454,6 +454,10 @@ export interface CommandPanelPublishSuccess {
   /** 发布写入后的新 revision。 */
   revision: number
   warnings: ValidationIssue[]
+  /** 本次被忽略的清理目标；QQ 40030006 表示面板已不存在，删除按幂等成功处理。 */
+  ignoredCleanupPanelIds: Partial<Record<PanelScope, string[]>>
+  /** 仅 partial 时保留；清理失败 panelId -> 稳定错误说明。 */
+  cleanupFailures: Partial<Record<PanelScope, Record<string, string>>>
 }
 
 export interface CommandPanelPublishFailure {

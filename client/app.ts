@@ -45,6 +45,9 @@ interface PanelState {
   refreshingPlatform: boolean
   publishMessage: string
   publishIssues: ValidationIssue[]
+  pendingCleanupPanelIds: Partial<Record<PanelScope, string[]>>
+  cleanupFailures: Partial<Record<PanelScope, Record<string, string>>>
+  cleaningUp: boolean
   tab: TabKey
   mode: ViewMode
   loading: boolean
@@ -278,6 +281,9 @@ export default defineComponent({
       refreshingPlatform: false,
       publishMessage: '',
       publishIssues: [],
+      pendingCleanupPanelIds: {},
+      cleanupFailures: {},
+      cleaningUp: false,
       tab: 'private',
       mode: 'visual',
       loading: false,
@@ -339,6 +345,9 @@ export default defineComponent({
         state.driftError = ''
         state.publishMessage = ''
         state.publishIssues = []
+        state.pendingCleanupPanelIds = {}
+        state.cleanupFailures = {}
+        state.cleaningUp = false
       } catch (error) {
         state.status = 'failed'
         state.error = errorMessage(error)
@@ -655,6 +664,8 @@ export default defineComponent({
           if (result.status === 'partial') message.warning('指令面板部分发布')
           else message.success('指令面板已发布')
           await loadWorkspace(state.activeAppId)
+          state.pendingCleanupPanelIds = result.ignoredCleanupPanelIds
+          state.cleanupFailures = result.cleanupFailures
           if (result.status === 'partial') {
             const details = [
               successfulScopes.length ? `已写入 ${successfulScopes.length} 个场景` : '',
@@ -723,6 +734,25 @@ export default defineComponent({
         state.publishMessage = `发布失败：${errorMessage(error)}`
       } finally {
         state.publishing = false
+      }
+    }
+
+    const cleanupPendingPanels = async () => {
+      const ids: Partial<Record<PanelScope, string[]>> = {}
+      let hasPending = false
+      for (const scope of PANEL_SCOPES) {
+        const panelIds = state.pendingCleanupPanelIds[scope] ?? []
+        if (panelIds.length) {
+          ids[scope] = panelIds
+          hasPending = true
+        }
+      }
+      if (!hasPending) return
+      state.cleaningUp = true
+      try {
+        await publishCommandPanel(ids, true)
+      } finally {
+        state.cleaningUp = false
       }
     }
 
@@ -1021,6 +1051,14 @@ export default defineComponent({
         renderImportCandidates(),
         renderDrift(),
         state.publishMessage ? h('div', { class: ['me-alert', state.publishMessage.includes('成功') ? 'me-alert-success' : 'me-alert-warn'] }, state.publishMessage) : null,
+        Object.entries(state.pendingCleanupPanelIds).length ? h('div', { class: 'me-alert me-alert-warn' }, [
+          h('div', {}, '以下场景仍有待清理面板：'),
+          ...PANEL_SCOPES.filter(scope => (state.pendingCleanupPanelIds[scope] ?? []).length > 0).flatMap(scope => [
+            h('div', { key: scope }, `${PANEL_SCOPE_LABELS[scope]}：${(state.pendingCleanupPanelIds[scope] ?? []).join('、')}`),
+            ...(state.cleanupFailures[scope] ? Object.entries(state.cleanupFailures[scope]!).map(([panelId, message]) => h('div', { key: `${scope}-${panelId}`, class: 'me-hint' }, `清理失败 ${panelId}：${message}`)) : []),
+          ]),
+          h('button', { type: 'button', class: 'me-button', disabled: state.cleaningUp, onClick: () => void cleanupPendingPanels() }, state.cleaningUp ? '清理中…' : '重试清理'),
+        ]) : null,
         renderBots(),
         state.bots.length ? renderSwitchTabs() : null,
         state.bots.length ? (state.mode === 'json' ? renderJsonEditor() : renderVisual()) : null,
