@@ -98,6 +98,20 @@ export function collectScopeExtras(
 }
 
 /**
+ * 补回 `command` 条目名称的 `/` 前缀。
+ *
+ * QQ 平台会剥掉这个前缀：真实抓包里 menu-edit 以 `name: '/测试'` PUT 之后，平台
+ * GET /v2/panels 返回的是 `name: '测试'`。menu-edit 内部与编辑器都按「`/名字`」存储，
+ * 平台边界读取时补回来，否则导入出的 Draft 会直接带上 `command-prefix` 硬错误。
+ */
+export function normalizePanelItemCommandName(item: unknown): unknown {
+  if (!isRecord(item) || item.type !== 'command') return item
+  const name = item.name
+  if (typeof name !== 'string' || !name || name.startsWith('/')) return item
+  return { ...item, name: `/${name}` }
+}
+
+/**
  * 导入合并用的条目指纹：`name` 加 `desc` / `only_admin` / `link` 归一后的完全一致判定。
  * 同名但指纹不同的条目不会被合并。
  */

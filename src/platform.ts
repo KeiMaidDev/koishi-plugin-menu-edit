@@ -8,6 +8,7 @@
  */
 import type { Context } from 'koishi'
 import { appIdOf } from './bot-registry'
+import { normalizePanelItemCommandName } from './command-panel'
 import { resolveOnlineStatus } from './bot-status'
 import { normalizeCommandPanel, normalizePrivateMenu } from './configuration'
 import { isRecord } from './guards'
@@ -99,8 +100,13 @@ function platformErrorCode(error: unknown): number | undefined {
   return undefined
 }
 
+/**
+ * 平台读到的 command 条目名称会被 QQ 剥掉开头的 `/`，这里在边界处补回 menu-edit 的
+ * 内部约定；导入、Drift 与候选摘要因此拿到同一份名称口径。
+ */
 function commandPanelOf(record: Record<string, unknown>): CommandPanelConfiguration {
-  return normalizeCommandPanel(record.panel)
+  const panel = normalizeCommandPanel(record.panel)
+  return { ...panel, items: panel.items.map(item => normalizePanelItemCommandName(item)) }
 }
 
 function toPlatformCommandPanel(record: Record<string, unknown>, scope: PanelScope): PlatformCommandPanel | null {
