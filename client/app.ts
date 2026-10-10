@@ -149,7 +149,7 @@ const PANEL_STYLE = `
 .me-chat-state { width: 6px; height: 6px; border-radius: 50%; background: #34c759; }
 .me-chat-state.me-chat-state-offline { background: #c0c4cc; }
 .me-chat-body { flex: 1; min-height: 0; overflow: hidden; padding: 12px; }
-.me-bubble { display: inline-block; padding: 8px 12px; border-radius: 10px; background: #fafafa; box-shadow: 0 1px 2px rgba(0,0,0,.05); font-size: 12px; color: #333; }
+.me-bubble { display: inline-block; padding: 8px 12px; border-radius: 10px; background: #fafafa; box-shadow: 0 1px 2px rgba(0,0,0,.05); font-size: 14px; line-height: 1.45; color: #333; }
 .me-phone-input-zone { background: #f5f5f5; }
 .me-strip { display: flex; flex-wrap: nowrap; gap: 8px; overflow-x: auto; padding: 11px 6px; scrollbar-width: none; }
 .me-strip::-webkit-scrollbar { display: none; }
@@ -261,7 +261,7 @@ export default defineComponent({
       cancelAutoSave()
       state.conflict = conflict
       state.status = 'failed'
-      state.error = `revision 冲突：服务端当前为 revision ${conflict.revision}，本地为 revision ${state.revision}。`
+      state.error = `版本冲突：服务端当前版本为 ${conflict.revision}，本地版本为 ${state.revision}。`
     }
 
     const markDirty = () => {
@@ -272,7 +272,7 @@ export default defineComponent({
       if (isDirty()) scheduleAutoSave()
     }
 
-    /** 结构化编辑的入口：更新 configuration，并同步 JSON 文本。 */
+    /** 结构化编辑的入口：更新 configuration，并同步配置文本。 */
     const updateConfiguration = (next: PanelConfiguration) => {
       state.configuration = next
       state.jsonText = stringify(next)
@@ -312,7 +312,7 @@ export default defineComponent({
       if (!state.activeAppId || state.status === 'saving') return
       if (state.jsonError) {
         state.status = 'failed'
-        state.error = `JSON 解析失败：${state.jsonError}`
+        state.error = `配置文本解析失败：${state.jsonError}`
         return
       }
       if (!isDirty()) {
@@ -364,12 +364,15 @@ export default defineComponent({
       try {
         const parsed: unknown = JSON.parse(value)
         if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-          throw new Error('顶层必须是 JSON 对象')
+          throw new Error('顶层必须是配置对象')
         }
         state.configuration = normalizeConfiguration(parsed)
         state.jsonError = ''
       } catch (error) {
-        state.jsonError = errorMessage(error)
+        const detail = errorMessage(error)
+        state.jsonError = detail === '顶层必须是配置对象'
+          ? detail
+          : '格式不正确，请检查括号、引号和逗号。'
       }
       state.status = state.jsonError ? 'unsaved' : (isDirty() ? 'unsaved' : 'saved')
       state.error = ''
@@ -382,18 +385,18 @@ export default defineComponent({
 
     const formatJson = () => {
       if (state.jsonError) {
-        state.error = `JSON 解析失败：${state.jsonError}`
+        state.error = `配置文本解析失败：${state.jsonError}`
         return
       }
       state.jsonText = stringify(state.configuration)
-      message.success('已格式化 JSON')
+      message.success('已格式化配置文本')
     }
 
     const selectBot = async (appId: string) => {
       if (appId === state.activeAppId || state.loading) return
       if (isDirty()) {
         try {
-          await messageBox.confirm('切换 Bot Instance 会丢弃当前未保存的本地修改，是否继续？', '切换 Bot Instance', {
+          await messageBox.confirm('切换 QQ 应用实例会丢弃当前未保存的本地修改，是否继续？', '切换 QQ 应用实例', {
             type: 'warning',
             confirmButtonText: '继续切换',
             cancelButtonText: '取消',
@@ -409,7 +412,7 @@ export default defineComponent({
       if (!state.activeAppId) return
       if (isDirty()) {
         try {
-          await messageBox.confirm('重新加载会用服务端最新 Draft 覆盖当前本地修改，是否继续？', '重新加载', {
+          await messageBox.confirm('重新加载会用服务端最新草稿覆盖当前本地修改，是否继续？', '重新加载', {
             type: 'warning',
             confirmButtonText: '重新加载',
             cancelButtonText: '取消',
@@ -432,9 +435,9 @@ export default defineComponent({
       if (!state.activeAppId) return
       try {
         await messageBox.confirm(
-          'Discard Draft 会丢弃当前未发布的修改，并恢复为最近一次记录的内容。是否继续？',
-          'Discard Draft',
-          { type: 'warning', confirmButtonText: 'Discard', cancelButtonText: '取消' },
+          '丢弃草稿会丢弃当前未发布的修改，并恢复为最近一次记录的内容。是否继续？',
+          '丢弃草稿',
+          { type: 'warning', confirmButtonText: '丢弃', cancelButtonText: '取消' },
         )
       } catch {
         return
@@ -456,8 +459,8 @@ export default defineComponent({
       if (isDirty()) {
         try {
           await messageBox.confirm(
-            '导入会用平台当前 Private Menu 覆盖 Draft，并记为导入内容。是否继续？',
-            '导入 Private Menu',
+            '导入会用平台当前私聊菜单覆盖草稿，并记为导入内容。是否继续？',
+            '导入私聊菜单',
             { type: 'warning', confirmButtonText: '导入', cancelButtonText: '取消' },
           )
         } catch {
@@ -470,7 +473,7 @@ export default defineComponent({
       try {
         const result = await api.importPrivateMenu({ appId: state.activeAppId })
         if (result.ok) {
-          message.success('已导入 Private Menu')
+          message.success('已导入私聊菜单')
           await loadWorkspace(state.activeAppId)
         } else {
           state.importError = `导入失败：${result.message}`
@@ -487,7 +490,7 @@ export default defineComponent({
       if (selections === undefined && isDirty()) {
         try {
           await messageBox.confirm(
-            '导入会用平台当前指令面板覆盖 Draft，并记为导入内容。是否继续？',
+            '导入会用平台当前指令面板覆盖草稿，并记为导入内容。是否继续？',
             '导入指令面板',
             { type: 'warning', confirmButtonText: '导入', cancelButtonText: '取消' },
           )
@@ -506,7 +509,7 @@ export default defineComponent({
         const result = await api.importCommandPanel({ appId: state.activeAppId, selections })
         if (result.ok) {
           const scopes = Object.keys(result.managedPanelIds) as PanelScope[]
-          message.success(scopes.length ? '已导入指令面板' : '平台没有可接管的 all 面板，已留空')
+          message.success(scopes.length ? '已导入指令面板' : '平台没有可接管的通用面板，已留空')
           await loadWorkspace(state.activeAppId)
           state.publishMessage = scopes.length
             ? `已接管 ${scopes.length} 个场景的受管面板。`
@@ -522,7 +525,7 @@ export default defineComponent({
               severity: 'warning' as const,
               code: 'command-panel.import-specific',
               path: `commandPanel.scopes.${scope}`,
-              message: `${PANEL_SCOPE_LABELS[scope]} 场景存在 specific 面板 ${panel.panelId}，本页不会接管或删除它。`,
+              message: `${PANEL_SCOPE_LABELS[scope]} 场景存在专用面板 ${panel.panelId}，本页不会接管或删除它。`,
             }))),
           ]
         } else if (result.code === 'selection-required') {
@@ -547,7 +550,7 @@ export default defineComponent({
     ): Promise<void> => {
       if (!state.activeAppId || state.publishing) return
       if (state.jsonError) {
-        state.error = `JSON 解析失败：${state.jsonError}`
+        state.error = `配置文本解析失败：${state.jsonError}`
         return
       }
       if (isDirty() || state.status !== 'saved') {
@@ -616,7 +619,7 @@ export default defineComponent({
           let confirmed = false
           try {
             await messageBox.confirm(
-              `发布前需要删除以下其他 all 指令面板：\n\n${formatCleanupCandidates(result.candidates)}\n\n删除后无法从本页面恢复，是否继续？`,
+              `发布前需要删除以下其他通用指令面板：\n\n${formatCleanupCandidates(result.candidates)}\n\n删除后无法从本页面恢复，是否继续？`,
               '确认清理其他指令面板',
               { type: 'warning', confirmButtonText: '确认删除并发布', cancelButtonText: '取消' },
             )
@@ -629,7 +632,7 @@ export default defineComponent({
             for (const group of result.candidates) ids[group.scope] = group.candidates.map(candidate => candidate.panelId)
             return publishCommandPanel(ids, true)
           }
-          state.publishMessage = '已取消清理，Draft 未发布。'
+          state.publishMessage = '已取消清理，草稿未发布。'
         } else if (result.code === 'revision-conflict') {
           applyConflict({ ok: false, reason: 'revision-conflict', revision: result.revision, draft: result.draft })
           state.publishMessage = result.message
@@ -637,7 +640,7 @@ export default defineComponent({
           state.publishIssues = result.errors
           state.publishMessage = result.message
         } else if (result.code === 'quantity-limit') {
-          state.publishMessage = '发布失败：QQ 平台返回条目数量超限（40030013），Draft 与旧 Published Revision 已保留。'
+          state.publishMessage = '发布失败：QQ 平台返回条目数量超限（40030013），草稿与上次成功发布的版本已保留。'
         } else {
           state.publishMessage = `发布失败：${result.message}`
         }
@@ -653,7 +656,7 @@ export default defineComponent({
     const publishPrivateMenu = async () => {
       if (!state.activeAppId || state.publishing) return
       if (state.jsonError) {
-        state.error = `JSON 解析失败：${state.jsonError}`
+        state.error = `配置文本解析失败：${state.jsonError}`
         return
       }
       if (isDirty() || state.status !== 'saved') {
@@ -665,7 +668,7 @@ export default defineComponent({
       const privateErrors = privateValidation.errors.filter(issue => issue.path.startsWith('privateMenu'))
       if (privateErrors.length) {
         state.publishIssues = privateErrors
-        state.publishMessage = `发布被阻止：Private Menu 有 ${privateErrors.length} 个硬错误。`
+        state.publishMessage = `发布被阻止：私聊菜单有 ${privateErrors.length} 个硬错误。`
         return
       }
       const warnings = privateValidation.warnings.filter(issue => issue.path.startsWith('privateMenu'))
@@ -690,9 +693,9 @@ export default defineComponent({
           expectedRevision: state.revision,
         })
         if (result.ok) {
-          message.success('Private Menu 已发布')
+          message.success('私聊菜单已发布')
           await loadWorkspace(state.activeAppId)
-          state.publishMessage = `Private Menu 发布成功（平台版本 ${result.published.version ?? '未知'}）。`
+          state.publishMessage = `私聊菜单发布成功（平台版本 ${result.published.version ?? '未知'}）。`
           state.publishIssues = result.warnings
         } else if (result.code === 'revision-conflict') {
           applyConflict({ ok: false, reason: 'revision-conflict', revision: result.revision, draft: result.draft })
@@ -739,7 +742,7 @@ export default defineComponent({
           h('div', { class: 'me-bot-name' }, bot.name),
           h('div', { class: 'me-bot-sub' }, [
             h('span', { class: ['me-dot', bot.online ? 'me-online' : ''] }),
-            h('span', `${bot.online ? '在线' : '离线'} · AppID ${bot.appId}`),
+            h('span', `${bot.online ? '在线' : '离线'} · 应用 ID ${bot.appId}`),
           ]),
         ]),
       ])
@@ -747,30 +750,30 @@ export default defineComponent({
 
     const renderToolbar = () => h('div', { class: 'me-toolbar' }, [
       h('span', { class: ['me-badge', `me-${state.status}`] }, STATUS_TEXT[state.status]),
-      h('span', { class: 'me-hint' }, state.activeAppId ? `revision ${state.revision}` : '未选择 Bot Instance'),
+      h('span', { class: 'me-hint' }, state.activeAppId ? `版本 ${state.revision}` : '未选择 QQ 应用实例'),
       h('span', { class: 'me-spacer' }),
       h('button', {
         type: 'button',
         class: 'me-button',
         disabled: state.loading || state.importing || !state.activeAppId,
         onClick: () => void (state.tab === 'command' ? importCommandPanel() : importPrivateMenu()),
-      }, state.importing ? '导入中…' : (state.tab === 'command' ? '导入指令面板' : '导入 Private Menu')),
+      }, state.importing ? '导入中…' : (state.tab === 'command' ? '导入指令面板' : '导入私聊菜单')),
       h('button', { type: 'button', class: 'me-button', disabled: state.loading, onClick: () => void reload() }, '重新加载'),
-      h('button', { type: 'button', class: 'me-button me-danger', disabled: state.loading, onClick: () => void discard() }, 'Discard Draft'),
+      h('button', { type: 'button', class: 'me-button me-danger', disabled: state.loading, onClick: () => void discard() }, '丢弃草稿'),
       h('button', { type: 'button', class: 'me-button', disabled: state.loading || state.status !== 'unsaved', onClick: () => void save() }, '保存'),
       h('button', {
         type: 'button',
         class: 'me-button me-primary',
         disabled: state.loading || state.publishing || !state.activeAppId,
         onClick: () => void (state.tab === 'command' ? publishCommandPanel() : publishPrivateMenu()),
-      }, state.publishing ? '发布中…' : 'Publish'),
+      }, state.publishing ? '发布中…' : '发布'),
     ])
 
     const renderConflict = () => state.conflict
       ? h('div', { class: 'me-alert me-alert-warn me-conflict' }, [
-        h('span', `检测到 revision 冲突：服务端当前为 revision ${state.conflict.revision}。`),
-        h('button', { type: 'button', class: 'me-button', onClick: () => void reload() }, '重新加载最新 Draft'),
-        h('button', { type: 'button', class: 'me-button me-primary', onClick: () => void forceOverwrite() }, '以最新 revision 强制覆盖'),
+        h('span', `检测到版本冲突：服务端当前版本为 ${state.conflict.revision}。`),
+        h('button', { type: 'button', class: 'me-button', onClick: () => void reload() }, '重新加载最新草稿'),
+        h('button', { type: 'button', class: 'me-button me-primary', onClick: () => void forceOverwrite() }, '按最新版本强制覆盖'),
       ])
       : null
 
@@ -813,7 +816,7 @@ export default defineComponent({
       : null
     const renderBots = () => state.bots.length
       ? h('div', { class: 'me-bots' }, state.bots.map(renderBot))
-      : h('div', { class: 'me-hint' }, state.loading ? '正在加载 Bot Instance 列表…' : '没有可管理的 QQ Bot Instance。')
+      : h('div', { class: 'me-hint' }, state.loading ? '正在加载 QQ 应用实例列表…' : '没有可管理的 QQ 应用实例。')
 
     const renderSwitchTabs = () => h('div', { class: 'me-toolbar' }, [
       h('div', { class: 'me-tabs' }, [
@@ -823,13 +826,13 @@ export default defineComponent({
       h('span', { class: 'me-spacer' }),
       h('div', { class: 'me-mode' }, [
         h('button', { type: 'button', class: ['me-button', state.mode === 'visual' ? 'me-primary' : ''], onClick: () => { state.mode = 'visual' } }, '可视化'),
-        h('button', { type: 'button', class: ['me-button', state.mode === 'json' ? 'me-primary' : ''], onClick: () => { state.mode = 'json' } }, 'JSON'),
+        h('button', { type: 'button', class: ['me-button', state.mode === 'json' ? 'me-primary' : ''], onClick: () => { state.mode = 'json' } }, '配置文本'),
       ]),
     ])
 
     const renderJsonEditor = () => h('div', { class: 'me-column' }, [
-      h('div', { class: 'me-hint' }, 'JSON Panel Configuration（privateMenu / commandPanel；未知字段会原样保留）'),
-      state.jsonError ? h('div', { class: 'me-alert me-alert-error' }, `JSON 解析失败：${state.jsonError}`) : null,
+      h('div', { class: 'me-hint' }, '配置文本（privateMenu / commandPanel；未知字段会原样保留）'),
+      state.jsonError ? h('div', { class: 'me-alert me-alert-error' }, `配置文本解析失败：${state.jsonError}`) : null,
       h('textarea', {
         class: 'me-editor',
         value: state.jsonText,
@@ -837,7 +840,7 @@ export default defineComponent({
         onInput: (event: Event) => onJsonInput((event.target as HTMLTextAreaElement).value),
       }),
       h('div', { class: 'me-toolbar' }, [
-        h('button', { type: 'button', class: 'me-button', disabled: !!state.jsonError, onClick: formatJson }, '格式化 JSON'),
+        h('button', { type: 'button', class: 'me-button', disabled: !!state.jsonError, onClick: formatJson }, '格式化配置文本'),
       ]),
     ])
 
@@ -885,7 +888,7 @@ export default defineComponent({
         h('div', { class: 'me-column' }, [
           h('div', { class: 'me-hint' }, '手机预览'),
           h(PrivateMenuPreview, { items: state.configuration.privateMenu.items, name: activeBot()?.name, online: activeBot()?.online }),
-          h('div', { class: 'me-hint' }, '预览中的开关、菜单展开只影响预览态，不修改 Draft。'),
+          h('div', { class: 'me-hint' }, '预览中的开关、菜单展开只影响预览态，不修改草稿。'),
         ]),
       ])
     }

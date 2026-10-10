@@ -211,7 +211,7 @@ export class MenuStateStore {
     if (primary.unsupportedVersion !== undefined) {
       throw new MenuStateStoreError(
         'state-version-unsupported',
-        `AppID ${appId} 的菜单状态文件版本 ${primary.unsupportedVersion} 高于当前支持版本 ${MENU_STATE_SCHEMA_VERSION}，拒绝静默覆盖。`,
+        `应用 ID ${appId} 的菜单状态文件版本 ${primary.unsupportedVersion} 高于当前支持版本 ${MENU_STATE_SCHEMA_VERSION}，拒绝静默覆盖。`,
       )
     }
     if (primary.missing) return null
@@ -221,13 +221,13 @@ export class MenuStateStore {
     if (backup.unsupportedVersion !== undefined) {
       throw new MenuStateStoreError(
         'state-version-unsupported',
-        `AppID ${appId} 的菜单状态备份版本 ${backup.unsupportedVersion} 高于当前支持版本 ${MENU_STATE_SCHEMA_VERSION}，拒绝静默覆盖。`,
+        `应用 ID ${appId} 的菜单状态备份版本 ${backup.unsupportedVersion} 高于当前支持版本 ${MENU_STATE_SCHEMA_VERSION}，拒绝静默覆盖。`,
       )
     }
 
     throw new MenuStateStoreError(
       'state-unreadable',
-      `AppID ${appId} 的菜单状态文件无法读取，且没有可用的 .bak 备份。`,
+      `应用 ID ${appId} 的菜单状态文件无法读取，且没有可用的 .bak 备份。`,
       { cause: primary.error ?? backup.error },
     )
   }
@@ -250,7 +250,7 @@ export class MenuStateStore {
       await fs.rm(tmp, { force: true }).catch(() => {})
       throw new MenuStateStoreError(
         'state-write-failed',
-        `AppID ${appId} 的菜单状态写入失败。`,
+        `应用 ID ${appId} 的菜单状态写入失败。`,
         { cause: error },
       )
     }

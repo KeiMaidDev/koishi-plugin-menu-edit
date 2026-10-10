@@ -121,14 +121,14 @@ export function createKoishiMenuPlatform(ctx: Context): MenuPlatform {
 
   const requireBot = (appId: string): QQBotLike => {
     const bot = bots().find(item => item.platform === 'qq' && appIdOf(item) === appId)
-    if (!bot) throw new MenuPlatformError('bot-missing', `未找到 AppID 为 ${appId} 的 QQ Bot Instance。`)
-    if (bot.isActive === false) throw new MenuPlatformError('bot-offline', `AppID ${appId} 的机器人当前不在线。`)
+    if (!bot) throw new MenuPlatformError('bot-missing', `未找到应用 ID 为 ${appId} 的 QQ 应用实例。`)
+    if (bot.isActive === false) throw new MenuPlatformError('bot-offline', `应用 ID ${appId} 的机器人当前不在线。`)
     return bot
   }
 
   const requireInternal = (appId: string): QQInternalLike => {
     const internal = requireBot(appId).internal
-    if (!internal) throw new MenuPlatformError('platform-error', `AppID ${appId} 的 QQ 适配器未暴露 internal API。`)
+    if (!internal) throw new MenuPlatformError('platform-error', `应用 ID ${appId} 的 QQ 适配器未暴露内部 API。`)
     return internal
   }
 
@@ -136,16 +136,16 @@ export function createKoishiMenuPlatform(ctx: Context): MenuPlatform {
     async getPrivateMenu(appId) {
       const internal = requireInternal(appId)
       if (!internal.getMenu) {
-        throw new MenuPlatformError('platform-error', `AppID ${appId} 的 QQ 适配器未提供 getMenu()。`)
+        throw new MenuPlatformError('platform-error', `应用 ID ${appId} 的 QQ 适配器未提供 getMenu()。`)
       }
       let response: unknown
       try {
         response = await internal.getMenu()
       } catch (error) {
-        throw new MenuPlatformError('platform-error', `读取 AppID ${appId} 的 Private Menu 失败。`, { cause: error })
+        throw new MenuPlatformError('platform-error', `读取应用 ID ${appId} 的私聊菜单失败。`, { cause: error })
       }
       if (!isRecord(response)) {
-        throw new MenuPlatformError('platform-error', `AppID ${appId} 的 getMenu() 返回结构非法。`)
+        throw new MenuPlatformError('platform-error', `应用 ID ${appId} 的 getMenu() 返回结构非法。`)
       }
       return { menu: normalizePrivateMenu(response.menu), version: readVersion(response) }
     },
@@ -153,13 +153,13 @@ export function createKoishiMenuPlatform(ctx: Context): MenuPlatform {
     async setPrivateMenu(appId, menu) {
       const internal = requireInternal(appId)
       if (!internal.setMenu) {
-        throw new MenuPlatformError('platform-error', `AppID ${appId} 的 QQ 适配器未提供 setMenu()。`)
+        throw new MenuPlatformError('platform-error', `应用 ID ${appId} 的 QQ 适配器未提供 setMenu()。`)
       }
       let response: unknown
       try {
         response = await internal.setMenu({ menu })
       } catch (error) {
-        throw new MenuPlatformError('platform-error', `写入 AppID ${appId} 的 Private Menu 失败。`, { cause: error })
+        throw new MenuPlatformError('platform-error', `写入应用 ID ${appId} 的私聊菜单失败。`, { cause: error })
       }
       return { version: readVersion(response) }
     },
@@ -167,7 +167,7 @@ export function createKoishiMenuPlatform(ctx: Context): MenuPlatform {
     async listCommandPanels(appId, scope) {
       const internal = requireInternal(appId)
       if (!internal.getPanels) {
-        throw new MenuPlatformError('platform-error', `AppID ${appId} 的 QQ 适配器未提供 getPanels()。`)
+        throw new MenuPlatformError('platform-error', `应用 ID ${appId} 的 QQ 适配器未提供 getPanels()。`)
       }
       const panels: PlatformCommandPanel[] = []
       const seen = new Set<string>()
@@ -177,10 +177,10 @@ export function createKoishiMenuPlatform(ctx: Context): MenuPlatform {
         try {
           page = await internal.getPanels({ scope, cursor, limit: 50 })
         } catch (error) {
-          throw new MenuPlatformError('platform-error', `读取 AppID ${appId} 的 ${scope} 场景指令面板失败。`, { cause: error })
+          throw new MenuPlatformError('platform-error', `读取应用 ID ${appId} 的 ${scope} 场景指令面板失败。`, { cause: error })
         }
         if (!isRecord(page)) {
-          throw new MenuPlatformError('platform-error', `AppID ${appId} 的 getPanels() 返回结构非法。`)
+          throw new MenuPlatformError('platform-error', `应用 ID ${appId} 的 getPanels() 返回结构非法。`)
         }
         const records = Array.isArray(page.records) ? page.records : []
         for (const record of records) {
@@ -199,17 +199,17 @@ export function createKoishiMenuPlatform(ctx: Context): MenuPlatform {
     async createCommandPanel(appId, scope, panel) {
       const internal = requireInternal(appId)
       if (!internal.createPanel) {
-        throw new MenuPlatformError('platform-error', `AppID ${appId} 的 QQ 适配器未提供 createPanel()。`)
+        throw new MenuPlatformError('platform-error', `应用 ID ${appId} 的 QQ 适配器未提供 createPanel()。`)
       }
       let response: unknown
       try {
         response = await internal.createPanel({ scope, target_type: 'all', panel })
       } catch (error) {
-        throw mapPanelError(error, `创建 AppID ${appId} 的 ${scope} 场景指令面板失败。`)
+        throw mapPanelError(error, `创建应用 ID ${appId} 的 ${scope} 场景指令面板失败。`)
       }
       const panelId = isRecord(response) ? readString(response.panel_id) : ''
       if (!panelId) {
-        throw new MenuPlatformError('platform-error', `AppID ${appId} 的 createPanel() 未返回 panel_id。`)
+        throw new MenuPlatformError('platform-error', `应用 ID ${appId} 的 createPanel() 未返回 panel_id。`)
       }
       return { panelId, version: readVersion(response) }
     },
@@ -217,13 +217,13 @@ export function createKoishiMenuPlatform(ctx: Context): MenuPlatform {
     async modifyCommandPanel(appId, panelId, panel) {
       const internal = requireInternal(appId)
       if (!internal.modifyPanel) {
-        throw new MenuPlatformError('platform-error', `AppID ${appId} 的 QQ 适配器未提供 modifyPanel()。`)
+        throw new MenuPlatformError('platform-error', `应用 ID ${appId} 的 QQ 适配器未提供 modifyPanel()。`)
       }
       let response: unknown
       try {
         response = await internal.modifyPanel(panelId, { panel })
       } catch (error) {
-        throw mapPanelError(error, `修改 AppID ${appId} 的指令面板 ${panelId} 失败。`)
+        throw mapPanelError(error, `修改应用 ID ${appId} 的指令面板 ${panelId} 失败。`)
       }
       return { version: readVersion(response) }
     },
@@ -231,14 +231,14 @@ export function createKoishiMenuPlatform(ctx: Context): MenuPlatform {
     async deleteCommandPanel(appId, panelId) {
       const internal = requireInternal(appId)
       if (!internal.deletePanel) {
-        throw new MenuPlatformError('platform-error', `AppID ${appId} 的 QQ 适配器未提供 deletePanel()。`)
+        throw new MenuPlatformError('platform-error', `应用 ID ${appId} 的 QQ 适配器未提供 deletePanel()。`)
       }
       try {
         await internal.deletePanel(panelId)
       } catch (error) {
         // 40030006：面板已被平台删除或被其他写入者替换，删除目标是幂等的。
         if (platformErrorCode(error) === 40030006) return
-        throw mapPanelError(error, `删除 AppID ${appId} 的指令面板 ${panelId} 失败。`)
+        throw mapPanelError(error, `删除应用 ID ${appId} 的指令面板 ${panelId} 失败。`)
       }
     },
   }

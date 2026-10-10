@@ -90,7 +90,7 @@ function validateName(
 
 function validateLink(value: unknown, path: string, issues: ValidationIssue[], codePrefix: string) {
   if (!isNonEmptyString(value)) {
-    issues.push(error(`${codePrefix}.link-required`, path, 'link 类型必须填写链接。'))
+    issues.push(error(`${codePrefix}.link-required`, path, '链接类型的条目必须填写链接。'))
   } else if (!value.startsWith('https://')) {
     issues.push(warning(`${codePrefix}.link-insecure`, path, '链接必须以 https:// 开头。'))
   }
@@ -100,7 +100,7 @@ function validateLink(value: unknown, path: string, issues: ValidationIssue[], c
 function validateSubItems(item: Record<string, unknown>, path: string, issues: ValidationIssue[]) {
   const raw = item.sub_menu_items
   if (raw !== undefined && raw !== null && !Array.isArray(raw)) {
-    issues.push(error('private-menu.sub-items.not-array', `${path}.sub_menu_items`, 'menu 的子菜单必须是数组。'))
+    issues.push(error('private-menu.sub-items.not-array', `${path}.sub_menu_items`, '子菜单类型的子菜单字段必须是数组。'))
     return
   }
   const subItems: unknown[] = Array.isArray(raw) ? raw : []
@@ -187,13 +187,13 @@ export function validatePrivateMenu(menu: PrivateMenuConfiguration): ValidationR
   const issues: ValidationIssue[] = []
   const items = Array.isArray(menu.items) ? menu.items : []
   if (!Array.isArray(menu.items)) {
-    issues.push(error('private-menu.items.not-array', 'privateMenu.items', 'privateMenu.items 必须是数组。'))
+    issues.push(error('private-menu.items.not-array', 'privateMenu.items', '私聊菜单条目必须是数组。'))
   }
   if (items.length > PRIVATE_MENU_MAX_ITEMS) {
     issues.push(error(
       'private-menu.items.max',
       'privateMenu.items',
-      `Private Menu 一级按钮最多 ${PRIVATE_MENU_MAX_ITEMS} 个，当前 ${items.length} 个。`,
+      `私聊菜单一级按钮最多 ${PRIVATE_MENU_MAX_ITEMS} 个，当前 ${items.length} 个。`,
     ))
   }
 
@@ -216,7 +216,7 @@ export function validateCommandPanel(panel: CommandPanelConfiguration): Validati
   const issues: ValidationIssue[] = []
   const items = Array.isArray(panel.items) ? panel.items : []
   if (!Array.isArray(panel.items)) {
-    issues.push(error('command-panel.items.not-array', 'commandPanel.items', 'commandPanel.items 必须是数组。'))
+    issues.push(error('command-panel.items.not-array', 'commandPanel.items', '指令面板条目必须是数组。'))
   }
 
   const counts = scopeItemCounts(panel)
@@ -265,7 +265,7 @@ export function validateCommandPanel(panel: CommandPanelConfiguration): Validati
     }
 
     if (item.only_admin !== undefined && typeof item.only_admin !== 'boolean') {
-      issues.push(error('command-panel.item.only-admin-invalid', `${path}.only_admin`, 'only_admin 必须是布尔值。'))
+      issues.push(error('command-panel.item.only-admin-invalid', `${path}.only_admin`, '“仅管理员”字段必须是布尔值。'))
     }
 
     const type = item.type
@@ -275,12 +275,12 @@ export function validateCommandPanel(panel: CommandPanelConfiguration): Validati
     }
     if (type === 'link') {
       if (!isNonEmptyString(item.link)) {
-        issues.push(error('command-panel.item.link-required', `${path}.link`, 'link 类型必须填写链接。'))
+        issues.push(error('command-panel.item.link-required', `${path}.link`, '链接类型的条目必须填写链接。'))
       } else if (!item.link.startsWith('https://')) {
         issues.push(error('command-panel.item.link-insecure', `${path}.link`, '链接必须以 https:// 开头。'))
       }
     } else if (typeof item.name === 'string' && item.name.trim() && !item.name.trim().startsWith('/')) {
-      issues.push(error('command-panel.item.command-prefix', `${path}.name`, 'command 名称必须以 / 开头。'))
+      issues.push(error('command-panel.item.command-prefix', `${path}.name`, '指令类型条目的名称必须以 / 开头。'))
     }
     if (typeof item.desc === 'string' && displayWidth(item.desc) > 30) {
       issues.push(error('command-panel.item.desc-too-wide', `${path}.desc`, '描述展示宽度超过约 30 个字符。'))

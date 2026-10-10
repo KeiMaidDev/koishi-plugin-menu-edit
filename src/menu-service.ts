@@ -144,10 +144,10 @@ export class MenuService {
   async importPrivateMenu(input: ImportPrivateMenuInput): Promise<ImportPrivateMenuResult> {
     const bot = this.findBot(input.appId)
     if (!bot) {
-      return { ok: false, surface: 'privateMenu', code: 'unknown-bot', message: `未找到 AppID 为 ${input.appId} 的 QQ Bot Instance。` }
+      return { ok: false, surface: 'privateMenu', code: 'unknown-bot', message: `未找到应用 ID 为 ${input.appId} 的 QQ 应用实例。` }
     }
     if (!bot.online) {
-      return { ok: false, surface: 'privateMenu', code: 'bot-offline', message: `AppID ${input.appId} 的机器人当前不在线。` }
+      return { ok: false, surface: 'privateMenu', code: 'bot-offline', message: `应用 ID ${input.appId} 的机器人当前不在线。` }
     }
     if (!this.platform) {
       return { ok: false, surface: 'privateMenu', code: 'platform-error', message: 'QQ 平台能力不可用。' }
@@ -195,10 +195,10 @@ export class MenuService {
   async publishPrivateMenu(input: PrivateMenuPublishInput): Promise<PrivateMenuPublishResult> {
     const bot = this.findBot(input.appId)
     if (!bot) {
-      return this.publishFailure('unknown-bot', `未找到 AppID 为 ${input.appId} 的 QQ Bot Instance。`)
+      return this.publishFailure('unknown-bot', `未找到应用 ID 为 ${input.appId} 的 QQ 应用实例。`)
     }
     if (!bot.online) {
-      return this.publishFailure('bot-offline', `AppID ${input.appId} 的机器人当前不在线。`)
+      return this.publishFailure('bot-offline', `应用 ID ${input.appId} 的机器人当前不在线。`)
     }
     if (!this.platform) {
       return this.publishFailure('platform-error', 'QQ 平台能力不可用。')
@@ -211,7 +211,7 @@ export class MenuService {
           ok: false as const,
           surface: 'privateMenu' as const,
           code: 'revision-conflict' as const,
-          message: `revision 冲突：服务端当前为 revision ${state.revision}。`,
+          message: `版本冲突：服务端当前版本为 ${state.revision}。`,
           errors: [],
           revision: state.revision,
           draft: deepClone(state.draft),
@@ -225,7 +225,7 @@ export class MenuService {
           ok: false as const,
           surface: 'privateMenu' as const,
           code: 'validation-failed' as const,
-          message: `Private Menu 校验失败：${validation.errors.length} 个硬错误。`,
+          message: `私聊菜单校验失败：${validation.errors.length} 个硬错误。`,
           errors: validation.errors,
           revision: state.revision,
           draft: deepClone(state.draft),
@@ -269,8 +269,8 @@ export class MenuService {
    */
   async importCommandPanel(input: ImportCommandPanelInput): Promise<ImportCommandPanelResult> {
     const bot = this.findBot(input.appId)
-    if (!bot) return importFailure('unknown-bot', `未找到 AppID 为 ${input.appId} 的 QQ Bot Instance。`)
-    if (!bot.online) return importFailure('bot-offline', `AppID ${input.appId} 的机器人当前不在线。`)
+    if (!bot) return importFailure('unknown-bot', `未找到应用 ID 为 ${input.appId} 的 QQ 应用实例。`)
+    if (!bot.online) return importFailure('bot-offline', `应用 ID ${input.appId} 的机器人当前不在线。`)
     if (!this.platform) return importFailure('platform-error', 'QQ 平台能力不可用。')
 
     return this.store.runExclusive(input.appId, async () => {
@@ -314,7 +314,7 @@ export class MenuService {
         if (!chosen) {
           return importFailure(
             'panel-missing',
-            `候选列表中不存在 panel ID 为 ${chosenId} 的指令面板。`,
+            `候选列表中不存在面板编号为 ${chosenId} 的指令面板。`,
             multiScopes.map(item => scopeCandidates(item, candidatesByScope.get(item) ?? [])),
           )
         }
@@ -388,8 +388,8 @@ export class MenuService {
    */
   async publishCommandPanel(input: CommandPanelPublishInput): Promise<CommandPanelPublishResult> {
     const bot = this.findBot(input.appId)
-    if (!bot) return this.commandPublishFailure('unknown-bot', `未找到 AppID 为 ${input.appId} 的 QQ Bot Instance。`)
-    if (!bot.online) return this.commandPublishFailure('bot-offline', `AppID ${input.appId} 的机器人当前不在线。`)
+    if (!bot) return this.commandPublishFailure('unknown-bot', `未找到应用 ID 为 ${input.appId} 的 QQ 应用实例。`)
+    if (!bot.online) return this.commandPublishFailure('bot-offline', `应用 ID ${input.appId} 的机器人当前不在线。`)
     if (!this.platform) return this.commandPublishFailure('platform-error', 'QQ 平台能力不可用。')
 
     return this.store.runExclusive(input.appId, async () => {
@@ -401,7 +401,7 @@ export class MenuService {
           ok: false as const,
           surface: 'commandPanel' as const,
           code: 'revision-conflict' as const,
-          message: `revision 冲突：服务端当前为 revision ${state.revision}。`,
+          message: `版本冲突：服务端当前版本为 ${state.revision}。`,
           errors: [],
           revision: state.revision,
           draft: deepClone(state.draft),
@@ -416,7 +416,7 @@ export class MenuService {
           ok: false as const,
           surface: 'commandPanel' as const,
           code: 'validation-failed' as const,
-          message: `Command Panel 校验失败：${validation.errors.length} 个硬错误。`,
+          message: `指令面板校验失败：${validation.errors.length} 个硬错误。`,
           errors: validation.errors,
           revision: state.revision,
           draft: deepClone(state.draft),
@@ -616,7 +616,7 @@ export class MenuService {
   private requireBot(appId: string): BotInstanceSummary {
     const bot = this.findBot(appId)
     if (!bot) {
-      throw new MenuServiceError('unknown-bot', `未找到 AppID 为 ${appId} 的 QQ Bot Instance。`)
+      throw new MenuServiceError('unknown-bot', `未找到应用 ID 为 ${appId} 的 QQ 应用实例。`)
     }
     return bot
   }
