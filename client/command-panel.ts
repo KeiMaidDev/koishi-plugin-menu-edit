@@ -8,7 +8,6 @@
  */
 import {
   COMMAND_PANEL_ITEM_TYPES,
-  COMMAND_PANEL_MAX_ITEMS,
   PANEL_SCOPES,
   PANEL_SCOPE_LABELS,
   type PanelScope,
@@ -58,14 +57,7 @@ export function panelScopeLabel(scope: PanelScope): string {
   return PANEL_SCOPE_LABELS[scope]
 }
 
-/** 新条目默认勾选第一个未达上限的场景；四个场景都满时返回 null。 */
-export function defaultScopes(items: unknown[]): PanelScope[] | null {
-  const counts = scopeItemCounts({ items })
-  const scope = PANEL_SCOPES.find(candidate => counts[candidate] < COMMAND_PANEL_MAX_ITEMS)
-  return scope ? [scope] : null
-}
-
-export function createPanelItem(type: PanelItemType, scopes: readonly PanelScope[] = ['group']): JsonRecord {
+export function createPanelItem(type: PanelItemType, scopes: readonly PanelScope[] = []): JsonRecord {
   const base: JsonRecord = { name: '', desc: '', type, only_admin: false, scopes: [...scopes] }
   return type === 'link' ? { ...base, link: '' } : base
 }

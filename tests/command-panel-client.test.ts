@@ -3,7 +3,6 @@ import { describe, it } from 'node:test'
 import {
   changePanelItemType,
   createPanelItem,
-  defaultScopes,
   panelItemDesc,
   panelItemDisplayName,
   panelItemName,
@@ -16,9 +15,9 @@ import {
 } from '../client/command-panel'
 
 describe('client：Command Panel Item 助手', () => {
-  it('command 与 link 有对应默认字段与默认使用场景', () => {
-    assert.deepEqual(createPanelItem('command'), { name: '', desc: '', type: 'command', only_admin: false, scopes: ['group'] })
-    assert.deepEqual(createPanelItem('link'), { name: '', desc: '', type: 'link', only_admin: false, scopes: ['group'], link: '' })
+  it('command 与 link 有对应默认字段，且新条目默认不勾选使用场景', () => {
+    assert.deepEqual(createPanelItem('command'), { name: '', desc: '', type: 'command', only_admin: false, scopes: [] })
+    assert.deepEqual(createPanelItem('link'), { name: '', desc: '', type: 'link', only_admin: false, scopes: [], link: '' })
   })
 
   it('切换类型清理旧类型字段，保留可共用字段与未知字段', () => {
@@ -41,7 +40,7 @@ describe('client：Command Panel Item 助手', () => {
     assert.equal(panelItemDesc(command), '文档')
     assert.equal(panelItemOnlyAdmin(command), true)
     assert.equal(command.futureField, 42)
-    assert.deepEqual(panelItemScopes(command), ['group'])
+    assert.deepEqual(panelItemScopes(command), [])
   })
 
   it('使用场景可多选、按固定顺序排列，且不允许多选到空', () => {
@@ -56,15 +55,6 @@ describe('client：Command Panel Item 助手', () => {
 
     const onlyOne = patchPanelItem(createPanelItem('command'), { scopes: ['group'] })
     assert.deepEqual(panelItemScopes(togglePanelItemScope(onlyOne, 'group')), ['group'])
-  })
-
-  it('新增条目默认落到第一个未满的场景，四场景都满时返回 null', () => {
-    assert.deepEqual(defaultScopes([]), ['channel'])
-    const full = Array.from({ length: 20 }, (_, index) => patchPanelItem(createPanelItem('command'), {
-      name: `/c${index}`,
-      scopes: ['channel', 'dm', 'group', 'c2c'],
-    }))
-    assert.equal(defaultScopes(full), null)
   })
 
   it('手机预览按类型展示：command 补全 / 前缀并显示描述，link 显示进入箭头', () => {

@@ -2,8 +2,8 @@
  * Command Panel 结构化编辑器。
  *
  * 每个 Panel Item 是一张可折叠卡片：拖拽手柄 + 类型徽标 + 名称 + 使用场景数量 +
- * 管理员标记 + 校验状态 + 上移/下移/复制/删除。展开后可编辑指令名、指令介绍、
- * 权限菜单、使用场景与链接。所有变更通过 `update:items` 上抛，由页面统一保存。
+ * 管理员标记 + 校验状态 + 上移/下移/复制/删除。展开后可编辑指令名、command 的指令介绍、
+ * 权限菜单、使用场景与 link 的链接。所有变更通过 `update:items` 上抛，由页面统一保存。
  */
 import { defineComponent, h, reactive, type VNodeChild } from 'vue'
 import { COMMAND_PANEL_MAX_ITEMS, PANEL_SCOPES, type PanelScope, type ValidationIssue } from '../src/types'
@@ -17,7 +17,6 @@ import {
 import {
   changePanelItemType,
   createPanelItem,
-  defaultScopes,
   PANEL_ITEM_TYPES,
   panelItemDesc,
   panelItemLabel,
@@ -119,7 +118,9 @@ export const CommandPanelEditor = defineComponent({
             h('span', { class: 'me-name-prefix' }, '/'),
             textInput(commandNameInput(item), '指令名（不含 /）', value => patched(index, { name: value ? `/${value}` : '' })),
           ])),
-        field('指令介绍', textInput(panelItemDesc(item), '展示给用户的说明', value => patched(index, { desc: value }))),
+        type === 'link'
+          ? null
+          : field('指令介绍', textInput(panelItemDesc(item), '展示给用户的说明', value => patched(index, { desc: value }))),
         field('类型', select(panelItemType(item), PANEL_ITEM_TYPES.map(candidate => ({
           value: candidate,
           label: panelItemLabel(candidate),
@@ -193,7 +194,8 @@ export const CommandPanelEditor = defineComponent({
     }
 
     return () => {
-      const scopes = defaultScopes(props.items)
+      const counts = scopeItemCounts({ items: props.items })
+      const allFull = PANEL_SCOPES.every(scope => counts[scope] >= COMMAND_PANEL_MAX_ITEMS)
       return h('div', { class: 'me-editor-list' }, [
         renderCounts(),
         ...props.items.map(renderCard),
@@ -201,10 +203,10 @@ export const CommandPanelEditor = defineComponent({
           ...PANEL_ITEM_TYPES.map(type => h('button', {
             type: 'button',
             class: 'me-button',
-            disabled: scopes === null,
-            onClick: () => update([...props.items, createPanelItem(type, scopes ?? ['group'])]),
+            disabled: allFull,
+            onClick: () => update([...props.items, createPanelItem(type)]),
           }, `+ 添加${panelItemLabel(type)}`)),
-          scopes === null ? h('span', { class: 'me-hint' }, '四个使用场景都已达到 20 条上限') : null,
+          allFull ? h('span', { class: 'me-hint' }, '四个使用场景都已达到 20 条上限') : null,
         ]),
       ])
     }
