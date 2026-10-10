@@ -71,7 +71,6 @@ export const CommandPanelPreview = defineComponent({
           h('div', { class: 'me-cp-input-row' }, [
             h('div', { class: 'me-cp-input' }, [
               h('span', { class: 'me-cp-input-text' }, '/'),
-              h('span', { class: 'me-cp-input-icon' }, 'A\u207a'),
             ]),
             h('div', { class: 'me-cp-send' }, '发送'),
           ]),

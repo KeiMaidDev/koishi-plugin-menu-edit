@@ -211,7 +211,6 @@ const PANEL_STYLE = `
 .me-cp-input-row { display: flex; flex: none; align-items: center; gap: 11px; padding: 0 12px 8px; }
 .me-cp-input { display: flex; flex: 1; align-items: center; justify-content: space-between; min-width: 0; height: 37px; padding: 0 12px; border-radius: 9px; border: 1px solid #ededed; background: #fff; }
 .me-cp-input-text { font-size: 17px; color: #111; }
-.me-cp-input-icon { font-size: 14px; color: #9a9a9a; }
 .me-cp-send { display: flex; flex: none; align-items: center; justify-content: center; width: 76px; height: 37px; border-radius: 9px; background: #1a8cff; color: #fff; font-size: 15px; }
 @media (max-width: 900px) { .me-layout { grid-template-columns: minmax(0, 1fr); } }
 `
