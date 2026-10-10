@@ -5,6 +5,7 @@
  * Bot Instance 的稳定键是 `bot.config.id`（QQ AppID），这也是状态隔离键。
  */
 import type { Context } from 'koishi'
+import { resolveOnlineStatus } from './bot-status'
 import type { BotInstanceSummary } from './types'
 
 export interface BotRegistry {
@@ -16,7 +17,9 @@ export interface BotRegistry {
 
 interface BotLike {
   platform?: string
+  sid?: string
   selfId?: string
+  status?: number
   isActive?: boolean
   config?: { id?: unknown }
   user?: {
@@ -34,15 +37,27 @@ export function appIdOf(bot: BotLike): string {
   return String(bot.selfId ?? '')
 }
 
+/** status 插件以 `${platform}:${selfId}` 为 bots 快照键。 */
+export function sidOf(bot: BotLike): string {
+  if (bot.sid) return bot.sid
+  return `${bot.platform ?? ''}:${bot.selfId ?? ''}`
+}
+
+/** 以 status 插件的 ONLINE 语义判定实例是否可收发消息。 */
+export function isBotOnline(bot: BotLike): boolean {
+  return resolveOnlineStatus(bot.status, bot.isActive)
+}
+
 export function summarizeBot(bot: BotLike): BotInstanceSummary | null {
   if (bot.platform !== 'qq') return null
   const appId = appIdOf(bot)
   if (!appId) return null
   return {
     appId,
+    sid: sidOf(bot),
     name: bot.user?.name || bot.user?.nick || appId,
     avatar: bot.user?.avatar ?? '',
-    online: bot.isActive !== false,
+    online: isBotOnline(bot),
   }
 }
 

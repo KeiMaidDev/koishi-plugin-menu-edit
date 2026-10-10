@@ -18,7 +18,9 @@ import {
 
 export interface FakeBot {
   platform?: string
+  sid?: string
   selfId?: string
+  status?: number
   isActive?: boolean
   config?: { id?: unknown }
   user?: { name?: string; nick?: string; avatar?: string } | null

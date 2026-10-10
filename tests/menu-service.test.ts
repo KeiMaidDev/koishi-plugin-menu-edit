@@ -45,8 +45,24 @@ describe('MenuService：Bot Instance 列表', () => {
     ])
 
     assert.deepEqual(service.listBots(), [
-      { appId: '100', name: '一号机', avatar: 'https://example.com/100.png', online: true },
-      { appId: '200', name: '200', avatar: '', online: false },
+      { appId: '100', sid: 'qq:100', name: '一号机', avatar: 'https://example.com/100.png', online: true },
+      { appId: '200', sid: 'qq:200', name: '200', avatar: '', online: false },
+    ])
+  })
+
+  it('只有 Koishi ONLINE 状态显示在线，CONNECT / RECONNECT 不误报', () => {
+    const { service } = harness([
+      { platform: 'qq', selfId: '100', config: { id: '100' }, status: 1, isActive: true, user: { name: '运行中' } },
+      { platform: 'qq', selfId: '200', config: { id: '200' }, status: 2, isActive: true, user: { name: '连接中' } },
+      { platform: 'qq', selfId: '300', config: { id: '300' }, status: 4, isActive: true, user: { name: '重连中' } },
+      { platform: 'qq', selfId: '400', config: { id: '400' }, status: 0, isActive: true, user: { name: '离线' } },
+    ])
+
+    assert.deepEqual(service.listBots().map(bot => [bot.appId, bot.online]), [
+      ['100', true],
+      ['200', false],
+      ['300', false],
+      ['400', false],
     ])
   })
 

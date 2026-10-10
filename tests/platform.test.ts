@@ -2,13 +2,24 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { createKoishiMenuPlatform, MenuPlatformError } from '../src/platform'
 
-function ctxWith(internal: Record<string, unknown>) {
+function ctxWith(internal: Record<string, unknown>, bot: Record<string, unknown> = {}) {
   return {
-    bots: [{ platform: 'qq', isActive: true, config: { id: '100' }, internal }],
+    bots: [{ platform: 'qq', isActive: true, config: { id: '100' }, internal, ...bot }],
   } as never
 }
 
 describe('createKoishiMenuPlatform：Command Panel 平台边界', () => {
+  it('CONNECT / RECONNECT 状态不满足平台边界的在线门槛', async () => {
+    const platform = createKoishiMenuPlatform(ctxWith({
+      getMenu: async () => ({ menu: { items: [] } }),
+    }, { status: 2 }))
+
+    await assert.rejects(
+      () => platform.getPrivateMenu('100'),
+      (error: unknown) => error instanceof MenuPlatformError && error.code === 'bot-offline',
+    )
+  })
+
   it('createPanel 的 40030013 映射为 quantity-limit', async () => {
     const platform = createKoishiMenuPlatform(ctxWith({
       createPanel: async () => {

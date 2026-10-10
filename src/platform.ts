@@ -8,6 +8,7 @@
  */
 import type { Context } from 'koishi'
 import { appIdOf } from './bot-registry'
+import { resolveOnlineStatus } from './bot-status'
 import { normalizeCommandPanel, normalizePrivateMenu } from './configuration'
 import { isRecord } from './guards'
 import type { CommandPanelConfiguration, PanelScope, PrivateMenuConfiguration } from './types'
@@ -70,6 +71,7 @@ interface QQInternalLike {
 interface QQBotLike {
   platform?: string
   selfId?: string
+  status?: number
   isActive?: boolean
   config?: { id?: unknown }
   internal?: QQInternalLike
@@ -122,7 +124,7 @@ export function createKoishiMenuPlatform(ctx: Context): MenuPlatform {
   const requireBot = (appId: string): QQBotLike => {
     const bot = bots().find(item => item.platform === 'qq' && appIdOf(item) === appId)
     if (!bot) throw new MenuPlatformError('bot-missing', `未找到应用 ID 为 ${appId} 的 QQ 应用实例。`)
-    if (bot.isActive === false) throw new MenuPlatformError('bot-offline', `应用 ID ${appId} 的机器人当前不在线。`)
+    if (!resolveOnlineStatus(bot.status, bot.isActive)) throw new MenuPlatformError('bot-offline', `应用 ID ${appId} 的机器人当前不在线。`)
     return bot
   }
 

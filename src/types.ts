@@ -24,15 +24,20 @@ export const PANEL_SCOPE_LABELS: Record<PanelScope, string> = {
   c2c: '消息列表',
 }
 
+/** Koishi `Universal.Status.ONLINE`；status 插件快照也使用同一状态值。 */
+export const BOT_STATUS_ONLINE = 1
+
 /** 页面机器人列表里展示的 Bot Instance 摘要。 */
 export interface BotInstanceSummary {
   /** 隔离键，等于 `bot.config.id`（QQ AppID）。 */
   appId: string
+  /** Koishi Bot 的稳定会话键（`platform:selfId`），对应 status 插件 `bots` 快照的键。 */
+  sid: string
   /** 昵称，缺省时回退为 AppID。 */
   name: string
   /** 头像 URL，可能为空字符串。 */
   avatar: string
-  /** 当前是否在线。 */
+  /** 当前是否在线；只有 Koishi ONLINE 状态才算在线。 */
   online: boolean
 }
 

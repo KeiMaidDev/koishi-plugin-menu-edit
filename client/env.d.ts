@@ -4,6 +4,7 @@
  * 到本文件，把库声明为不透明边界，只保留本插件面板用到的 API 签名。
  */
 import type {} from 'vue'
+import type { BotStatusSnapshot } from './bot-status'
 
 export interface ElMessageApi {
   (options: { message: string; type?: 'success' | 'warning' | 'info' | 'error' }): void
@@ -32,8 +33,8 @@ export const messageBox: ElMessageBoxApi
 /** 控制台 WebSocket RPC；事件契约在 client/api.ts 里显式给出。 */
 export function send<T = unknown>(event: string, ...args: unknown[]): Promise<T>
 
-/** 控制台共享 store：面板只读 user 判断登录态。 */
-export const store: { user?: Record<string, unknown> }
+/** 控制台共享 store：面板读取 user 登录态与 status 插件的实时 Bot 快照。 */
+export const store: { user?: Record<string, unknown>; status?: BotStatusSnapshot }
 
 export interface ConsolePageOptions {
   path: string

@@ -1,4 +1,4 @@
-import { message, messageBox } from '@koishijs/client'
+import { message, messageBox, store } from '@koishijs/client'
 import { defineComponent, h, onBeforeUnmount, onMounted, reactive, resolveComponent } from 'vue'
 import { emptyPanelConfiguration, PANEL_SCOPES, PANEL_SCOPE_LABELS, type BotInstanceSummary, type CommandPanelCandidate, type CommandPanelPublishResult, type CommandPanelScopeCandidates, type DraftRevisionConflict, type DriftReport, type DriftState, type MenuItemDiff, type PanelConfiguration, type PanelScope, type PrivateMenuPublishResult, type ValidationIssue, type WorkspaceSnapshot } from '../src/types'
 import { validatePanelConfiguration } from '../src/validation'
@@ -8,6 +8,7 @@ import { normalizeConfiguration } from './private-menu'
 import { PrivateMenuPreview } from './phone-preview'
 import { CommandPanelEditor } from './command-editor'
 import { CommandPanelPreview } from './command-preview'
+import { resolveBotOnline } from './bot-status'
 
 /** 控制台页名：侧栏入口与 ctx.page 的 name 共用同一字面量。 */
 export const PANEL_NAME = '机器人菜单'
@@ -290,6 +291,9 @@ export default defineComponent({
       importing: false,
       publishing: false,
     })
+
+    const activeBotOnline = (bot: BotInstanceSummary | undefined) =>
+      bot ? resolveBotOnline(bot, store.status) : false
 
     let timer: ReturnType<typeof setTimeout> | undefined
     const cancelAutoSave = () => {
@@ -855,6 +859,7 @@ export default defineComponent({
 
     const renderBot = (bot: BotInstanceSummary) => {
       const active = bot.appId === state.activeAppId
+      const online = activeBotOnline(bot)
       return h('div', { class: ['me-bot', active ? 'me-active' : ''], onClick: () => void selectBot(bot.appId) }, [
         bot.avatar
           ? h('img', { class: 'me-avatar', src: bot.avatar, alt: bot.name })
@@ -862,8 +867,8 @@ export default defineComponent({
         h('div', { class: 'me-bot-meta' }, [
           h('div', { class: 'me-bot-name' }, bot.name),
           h('div', { class: 'me-bot-sub' }, [
-            h('span', { class: ['me-dot', bot.online ? 'me-online' : ''] }),
-            h('span', `${bot.online ? '在线' : '离线'} · 应用 ID ${bot.appId}`),
+            h('span', { class: ['me-dot', online ? 'me-online' : ''] }),
+            h('span', `${online ? '在线' : '离线'} · 应用 ID ${bot.appId}`),
           ]),
         ]),
       ])
@@ -1013,7 +1018,7 @@ export default defineComponent({
             h(CommandPanelPreview, {
               items: state.configuration.commandPanel.items,
               name: activeBot()?.name,
-              online: activeBot()?.online,
+              online: activeBotOnline(activeBot()),
             }),
             h('div', { class: 'me-hint' }, '预览可在四个使用场景间切换，只读，不触发真实指令。'),
           ]),
@@ -1034,7 +1039,7 @@ export default defineComponent({
         ]),
         h('div', { class: 'me-column' }, [
           h('div', { class: 'me-hint' }, '手机预览'),
-          h(PrivateMenuPreview, { items: state.configuration.privateMenu.items, name: activeBot()?.name, online: activeBot()?.online }),
+          h(PrivateMenuPreview, { items: state.configuration.privateMenu.items, name: activeBot()?.name, online: activeBotOnline(activeBot()) }),
           h('div', { class: 'me-hint' }, '预览中的开关、菜单展开只影响预览态，不修改草稿。'),
         ]),
       ])
