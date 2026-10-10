@@ -352,8 +352,6 @@ export default defineComponent({
         state.pendingCleanupPanelIds = {}
         state.cleanupFailures = {}
         state.cleaningUp = false
-        // 打开／切换 Bot Instance 时同步读取 Platform State，Drift 提示不需要手动刷新才出现。
-        await refreshPlatform()
       } catch (error) {
         state.status = 'failed'
         state.error = errorMessage(error)
