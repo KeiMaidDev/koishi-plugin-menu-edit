@@ -12,9 +12,10 @@ Publish 单独触发。
 - 一键导入当前 Private Menu：读取失败会显示错误并允许重试，不用空配置静默覆盖 Draft。
 - Private Menu 结构化编辑器支持 `send_message`、`link`、`menu`、`switch` 四类条目：新增、
   删除、复制、拖拽/上下移排序、展开编辑与子菜单编辑；一级按钮上限 10、子菜单上限 5。
-- Private Menu 手机预览：Strip 横向滚动不换行，`send_message` / `link` / `menu` 使用参考页
-  图标，`switch` 显示灰/蓝状态点，点击 `menu` 打开底部 Menu Sheet；预览操作不修改 Draft，
-  也不发送消息或打开链接。
+- Private Menu 手机预览：与 Command Panel 预览共用手机聊天外壳；Strip 横向滚动不换行，
+  `send_message` / `link` / `menu` 使用参考页图标，`switch` 关闭时显示灰色状态点、开启时
+  按钮填充、文字与状态点一起转蓝；点击 `menu` 打开带拖拽条、父项图标与子项分隔线的
+  Menu Sheet。预览操作不修改 Draft，也不发送消息或打开链接。
 - Command Panel 对齐官方 `/v2/panels`：Panel Item 自带本地字段 `scopes`（channel / dm /
   group / c2c 可多选），Draft 只保留一份条目列表，发布时按场景派生各场景内容并剥掉本地
   `scopes`；平台返回的未知字段原样保留。

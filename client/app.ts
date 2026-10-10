@@ -114,7 +114,7 @@ const PANEL_STYLE = `
 .me-tab { padding: 6px 14px; cursor: pointer; border: none; background: transparent; color: inherit; border-bottom: 2px solid transparent; font-size: 14px; }
 .me-tab.me-tab-active { color: var(--k-color-primary, #409eff); border-bottom-color: var(--k-color-primary, #409eff); }
 .me-mode { display: flex; gap: 4px; }
-.me-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+.me-layout { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 16px; align-items: start; }
 .me-column { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .me-editor-list { display: flex; flex-direction: column; gap: 8px; }
 .me-count { font-size: 12px; color: var(--k-text-light, #909399); }
@@ -138,34 +138,50 @@ const PANEL_STYLE = `
 .me-sub-title { font-size: 12px; color: var(--k-text-light, #909399); }
 .me-sub-row { display: grid; grid-template-columns: auto minmax(0,1.2fr) 110px minmax(0,1.4fr) auto auto auto; gap: 6px; align-items: center; }
 .me-add-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.me-phone { position: relative; width: 300px; max-width: 100%; border: 10px solid #2b2b2b; border-radius: 28px; background: #ededed; overflow: hidden; box-shadow: 0 6px 20px rgba(0,0,0,.18); }
-.me-phone-screen { display: flex; flex-direction: column; height: 520px; }
-.me-phone-notice { padding: 8px; text-align: center; font-size: 12px; color: #666; border-bottom: 1px solid #dcdcdc; }
-.me-phone-body { flex: 1; padding: 12px; overflow: hidden; }
-.me-bubble { display: inline-block; padding: 8px 12px; background: #fff; border-radius: 10px; font-size: 13px; color: #333; }
-.me-phone-input-zone { border-top: 1px solid #dcdcdc; background: #f7f7f7; }
-.me-strip { display: flex; flex-wrap: nowrap; gap: 8px; overflow-x: auto; padding: 10px; scrollbar-width: thin; }
-.me-strip-empty { padding: 10px; font-size: 12px; color: #999; }
-.me-strip-btn { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; padding: 7px 12px; border-radius: 18px; border: 1px solid #d9d9d9; background: #fff; color: #333; font-size: 13px; cursor: pointer; white-space: nowrap; }
-.me-strip-btn-flash { box-shadow: 0 0 0 2px #409eff inset; }
-.me-strip-btn-open { border-color: #409eff; }
-.me-strip-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.me-strip-icon { width: 18px; height: 18px; object-fit: contain; }
-.me-switch-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-.me-switch-dot.me-off { background: #c0c4cc; }
-.me-switch-dot.me-on { background: #409eff; }
-.me-strip-btn.me-switch-off { color: #999; }
-.me-strip-btn.me-switch-on { color: #409eff; }
-.me-phone-inputbar { margin: 0 10px 10px; padding: 8px 12px; border-radius: 18px; background: #fff; color: #bbb; font-size: 13px; }
-.me-sheet { position: absolute; left: 0; right: 0; bottom: 0; background: #fff; border-top-left-radius: 16px; border-top-right-radius: 16px; box-shadow: 0 -6px 20px rgba(0,0,0,.16); max-height: 70%; overflow-y: auto; }
-.me-sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #eee; }
-.me-sheet-title { font-size: 13px; color: #333; }
-.me-sheet-close { border: none; background: transparent; font-size: 18px; line-height: 1; cursor: pointer; color: #999; }
+/* 手机预览：数值取自 docs/menu-edit-panel-design.md §11.4 的参考图（1440x3200，DPR≈3.2，预览按 0.8 缩放）。 */
+.me-phone { position: relative; width: 380px; max-width: 100%; border: 10px solid #1f1f1f; border-radius: 30px; background: #f0f0f0; overflow: hidden; box-shadow: 0 6px 20px rgba(0,0,0,.18); }
+.me-phone-screen { display: flex; flex-direction: column; height: 640px; background: #f0f0f0; }
+.me-chat-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; }
+.me-chat-back { font-size: 20px; line-height: 1; color: #1f1f1f; }
+.me-chat-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.me-chat-name { font-size: 14px; color: #1f1f1f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me-chat-status { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #8a8a8a; }
+.me-chat-state { width: 6px; height: 6px; border-radius: 50%; background: #34c759; }
+.me-chat-state.me-chat-state-offline { background: #c0c4cc; }
+.me-chat-body { flex: 1; min-height: 0; overflow: hidden; padding: 12px; }
+.me-bubble { display: inline-block; padding: 8px 12px; border-radius: 10px; background: #fafafa; box-shadow: 0 1px 2px rgba(0,0,0,.05); font-size: 12px; color: #333; }
+.me-phone-input-zone { background: #f5f5f5; }
+.me-strip { display: flex; flex-wrap: nowrap; gap: 8px; overflow-x: auto; padding: 11px 6px; scrollbar-width: none; }
+.me-strip::-webkit-scrollbar { display: none; }
+.me-strip-empty { padding: 11px 6px; font-size: 12px; color: #999; }
+.me-strip-btn { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; height: 24px; padding: 0 9px 0 10px; border-radius: 6px; border: 1px solid #e1e1e1; background: #fafafa; color: #908f94; font-size: 12px; line-height: 1; cursor: pointer; white-space: nowrap; }
+.me-strip-btn:hover { border-color: #d0d0d0; }
+.me-strip-name { max-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me-strip-icon { width: 10px; height: 10px; object-fit: contain; }
+.me-strip .me-strip-fallback, .me-sheet .me-strip-fallback { display: inline-flex; align-items: center; justify-content: center; width: 10px; height: 10px; border-radius: 50%; background: #1a1a1a; color: #fff; font-size: 8px; }
+.me-strip-btn-flash { box-shadow: inset 0 0 0 2px rgba(32,76,165,.25); }
+.me-strip-btn-open { border-color: #204ca5; }
+.me-switch-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.me-switch-dot.me-off { background: #ccccce; }
+.me-switch-dot.me-on { background: #204ca5; }
+.me-strip-btn.me-switch-off { color: #908f94; }
+.me-strip-btn.me-switch-on { border-color: #e5edf8; background: #e5edf8; color: #204ca5; }
+.me-chat-input-row { display: flex; align-items: center; gap: 11px; padding: 0 6px 13px; }
+.me-chat-input { flex: 1; height: 33px; border-radius: 17px; background: #fff; }
+.me-chat-send { flex: none; display: flex; align-items: center; justify-content: center; width: 54px; height: 33px; border-radius: 17px; background: #7ac8f9; color: #fff; font-size: 12px; }
+.me-sheet-mask { position: absolute; left: 0; right: 0; top: 0; bottom: 46px; background: rgba(0,0,0,.4); }
+.me-sheet { position: absolute; left: 0; right: 0; bottom: 46px; max-height: calc(100% - 46px); overflow-y: auto; padding-bottom: 8px; border-radius: 7px 7px 0 0; background: #fff; color: #191919; }
+.me-sheet-handle { width: 32px; height: 4px; margin: 4px auto 0; border-radius: 2px; background: #ccccce; cursor: pointer; }
+.me-sheet-head { display: flex; align-items: center; gap: 7px; height: 44px; padding: 0 14px; }
+.me-sheet-title { font-size: 13px; color: #191919; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me-sheet-icon { width: 13px; height: 13px; object-fit: contain; }
 .me-sheet-list { display: flex; flex-direction: column; }
-.me-sheet-row { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border: none; border-bottom: 1px solid #f2f2f2; background: #fff; color: #333; font-size: 13px; cursor: pointer; text-align: left; }
-.me-sheet-row-flash { background: #f0f7ff; }
+.me-sheet-row { position: relative; display: flex; align-items: center; width: 100%; height: 40px; padding: 0 14px; border: 0; background: transparent; color: #191919; font-size: 13px; text-align: left; cursor: pointer; }
+.me-sheet-row-flash { background: #f2f6fd; }
+.me-sheet-line { position: absolute; left: 14px; right: 14px; bottom: 0; height: 1px; background: #f2f2f2; }
+.me-sheet-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .me-sheet-empty { padding: 14px; font-size: 12px; color: #999; }
-.me-admin-badge { padding: 1px 6px; border-radius: 8px; font-size: 11px; background: #fff3e0; color: #b26a00; }
+.me-admin-badge { padding: 1px 6px; border-radius: 8px; font-size: 11px; background: #eef1f6; color: #5b6472; }
 .me-type-badge-warn { background: #fdecea; color: #c62828; }
 .me-candidate { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; font-size: 13px; }
 .me-candidate-group { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
@@ -175,25 +191,29 @@ const PANEL_STYLE = `
 .me-scope-chip-on { border-color: var(--k-color-primary, #409eff); color: var(--k-color-primary, #409eff); background: #ecf5ff; }
 .me-name-input { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
 .me-name-prefix { color: var(--k-text-light, #909399); font-size: 13px; }
-.me-command-screen { height: 520px; background: #f0f0f0; }
-.me-scope-tabs { display: flex; gap: 4px; padding: 8px; border-bottom: 1px solid #e5e5e5; background: #fff; }
+.me-scope-tabs { display: flex; flex: none; gap: 4px; padding: 7px 8px; border-bottom: 1px solid #e5e5e5; background: #fff; }
 .me-scope-tab { flex: 1; padding: 5px 4px; border: none; border-radius: 6px; background: #f4f4f4; color: #666; font-size: 12px; cursor: pointer; }
 .me-scope-tab-active { background: #1a8cff; color: #fff; }
-.me-command-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; padding: 12px; overflow: hidden; }
-.me-command-panel { max-height: 55%; overflow-y: auto; background: #fff; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
-.me-command-list { display: flex; flex-direction: column; overflow: hidden; }
-.me-command-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid #f0f0f0; }
-.me-command-row:last-child { border-bottom: none; }
-.me-command-index { flex: none; width: 20px; height: 20px; border-radius: 50%; background: #eef3ff; color: #3b6fd4; font-size: 12px; display: flex; align-items: center; justify-content: center; }
-.me-command-main { min-width: 0; flex: 1; }
-.me-command-title { display: flex; align-items: center; gap: 6px; }
-.me-command-name { font-size: 13px; color: #111; }
-.me-command-desc { margin-top: 3px; font-size: 12px; color: #b8b8b8; word-break: break-all; }
-.me-command-chevron { flex: none; color: #c4c4c4; font-size: 18px; }
-.me-command-empty { padding: 20px 10px; text-align: center; font-size: 12px; color: #999; }
-.me-command-input-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px 10px; border-top: 1px solid #e5e5e5; background: #f7f7f7; }
-.me-command-input { flex: 1; padding: 8px 12px; border-radius: 16px; background: #fff; color: #bbb; font-size: 13px; }
-.me-command-send { padding: 8px 14px; border-radius: 16px; background: #1a8cff; color: #fff; font-size: 13px; }@media (max-width: 900px) { .me-layout { grid-template-columns: minmax(0, 1fr); } }
+.me-cp-phone { background: #f0f0f0; }
+.me-cp-screen { min-height: 0; background: #f0f0f0; }
+.me-cp-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; padding: 12px 12px 0; overflow: hidden; }
+.me-cp-chat > .me-bubble { align-self: flex-start; }
+.me-cp-panel { flex: 0 1 auto; display: flex; flex-direction: column; max-height: 352px; overflow: hidden; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,.06); }
+.me-cp-list { flex: 1 1 auto; overflow-y: auto; }
+.me-cp-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; height: 37px; padding: 0 12px; border-bottom: 1px solid #f0f0f0; }
+.me-cp-item:last-child { border-bottom: none; }
+.me-cp-title { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.me-cp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; color: #111; }
+.me-cp-admin { flex: none; padding: 0 5px; border-radius: 4px; background: #eef1f6; color: #5b6472; font-size: 10px; line-height: 15px; }
+.me-cp-desc { flex: none; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: #b8b8b8; text-align: right; }
+.me-cp-chevron { flex: none; font-size: 22px; line-height: 1; color: #c4c4c4; }
+.me-cp-empty { display: flex; align-items: center; height: 37px; padding: 0 12px; font-size: 13px; color: #b8b8b8; }
+.me-cp-input-row { display: flex; flex: none; align-items: center; gap: 11px; padding: 0 12px 8px; }
+.me-cp-input { display: flex; flex: 1; align-items: center; justify-content: space-between; min-width: 0; height: 37px; padding: 0 12px; border-radius: 9px; border: 1px solid #ededed; background: #fff; }
+.me-cp-input-text { font-size: 17px; color: #111; }
+.me-cp-input-icon { font-size: 14px; color: #9a9a9a; }
+.me-cp-send { display: flex; flex: none; align-items: center; justify-content: center; width: 76px; height: 37px; border-radius: 9px; background: #1a8cff; color: #fff; font-size: 15px; }
+@media (max-width: 900px) { .me-layout { grid-template-columns: minmax(0, 1fr); } }
 `
 
 function injectStyle() {
@@ -824,6 +844,8 @@ export default defineComponent({
       ]),
     ])
 
+    const activeBot = () => state.bots.find(bot => bot.appId === state.activeAppId)
+
     const renderVisual = () => {
       if (state.tab === 'command') {
         const validation = localValidation()
@@ -841,7 +863,11 @@ export default defineComponent({
           ]),
           h('div', { class: 'me-column' }, [
             h('div', { class: 'me-hint' }, '手机预览'),
-            h(CommandPanelPreview, { items: state.configuration.commandPanel.items }),
+            h(CommandPanelPreview, {
+              items: state.configuration.commandPanel.items,
+              name: activeBot()?.name,
+              online: activeBot()?.online,
+            }),
             h('div', { class: 'me-hint' }, '预览可在四个使用场景间切换，只读，不触发真实指令。'),
           ]),
         ])
@@ -861,7 +887,7 @@ export default defineComponent({
         ]),
         h('div', { class: 'me-column' }, [
           h('div', { class: 'me-hint' }, '手机预览'),
-          h(PrivateMenuPreview, { items: state.configuration.privateMenu.items }),
+          h(PrivateMenuPreview, { items: state.configuration.privateMenu.items, name: activeBot()?.name, online: activeBot()?.online }),
           h('div', { class: 'me-hint' }, '预览中的开关、菜单展开只影响预览态，不修改 Draft。'),
         ]),
       ])
