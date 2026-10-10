@@ -14,7 +14,7 @@ function fakeClock() {
   }
 }
 
-describe('PanelWriteThrottle：Group Panel 写入节流', () => {
+describe('PanelWriteThrottle：Command Panel 写入节流', () => {
   it('同一 AppID 的并发写入按 6500ms 间隔串行，无法绕过', async () => {
     const clock = fakeClock()
     const throttle = new PanelWriteThrottle({ now: clock.now, sleep: clock.sleep })

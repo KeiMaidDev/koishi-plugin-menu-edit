@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
-  GROUP_PANEL_MAX_ITEMS,
+  COMMAND_PANEL_MAX_ITEMS,
   PRIVATE_MENU_MAX_ITEMS,
   PRIVATE_MENU_MAX_SUB_ITEMS,
   type PrivateMenuConfiguration,
@@ -58,10 +58,14 @@ describe('validation：数量限制', () => {
     assert.ok(codes(menu([{ name: '更多', type: 'menu', sub_menu_items: subItems }]), 'error').includes('private-menu.sub-items.max'))
   })
 
-  it(`Group Panel 允许 ${GROUP_PANEL_MAX_ITEMS} 项，超出报硬错误`, () => {
-    const items = Array.from({ length: GROUP_PANEL_MAX_ITEMS + 1 }, (_, index) => ({ name: `/c${index}`, type: 'command' }))
-    const result = validatePanelConfiguration({ privateMenu: { items: [] }, groupPanel: { items } })
-    assert.ok(result.errors.some(issue => issue.code === 'group-panel.items.max'))
+  it(`Command Panel 单个场景允许 ${COMMAND_PANEL_MAX_ITEMS} 项，超出该场景报硬错误`, () => {
+    const allowed = Array.from({ length: COMMAND_PANEL_MAX_ITEMS }, (_, index) => ({ name: `/c${index}`, type: 'command', scopes: ['group'] }))
+    const ok = validatePanelConfiguration({ privateMenu: { items: [] }, commandPanel: { items: allowed } })
+    assert.equal(ok.errors.some(issue => issue.code === 'command-panel.scope.max'), false)
+
+    const overflow = [...allowed, { name: '/overflow', type: 'command', scopes: ['group'] }]
+    const result = validatePanelConfiguration({ privateMenu: { items: [] }, commandPanel: { items: overflow } })
+    assert.ok(result.errors.some(issue => issue.code === 'command-panel.scope.max'))
   })
 })
 
@@ -126,34 +130,55 @@ describe('validation：警告', () => {
     assert.equal(displayWidth('abcd'), 4)
   })
 })
-describe('validation：Group Panel 条目字段', () => {
-  function group(items: unknown[]) {
-    return validatePanelConfiguration({ privateMenu: { items: [] }, groupPanel: { items } })
+describe('validation：Command Panel 条目字段', () => {
+  function command(items: unknown[]) {
+    return validatePanelConfiguration({ privateMenu: { items: [] }, commandPanel: { items } })
   }
 
-  it('command 名称缺少 / 只报警告，link 缺少链接报硬错误并提示非 https', () => {
-    const result = group([
-      { name: 'help', desc: '帮助', type: 'command', only_admin: false },
-      { name: '官网', desc: '打开官网', type: 'link', only_admin: true },
-      { name: '文档', type: 'link', link: 'http://example.com', only_admin: false },
+  it('未勾选使用场景报硬错误', () => {
+    const result = command([{ name: '/a', type: 'command', scopes: [] }])
+    assert.ok(result.errors.some(issue => issue.code === 'command-panel.item.scopes-required'))
+  })
+
+  it('command 名称缺少 / 与 link 非 https 都是硬错误', () => {
+    const result = command([
+      { name: 'help', desc: '帮助', type: 'command', only_admin: false, scopes: ['group'] },
+      { name: '官网', desc: '打开官网', type: 'link', only_admin: true, scopes: ['group'] },
+      { name: '文档', type: 'link', link: 'http://example.com', only_admin: false, scopes: ['c2c'] },
     ])
-    assert.ok(result.warnings.some(issue => issue.code === 'group-panel.item.command-prefix'))
-    assert.ok(result.errors.some(issue => issue.code === 'group-panel.item.link-required'))
-    assert.ok(result.warnings.some(issue => issue.code === 'group-panel.item.link-insecure'))
+    assert.ok(result.errors.some(issue => issue.code === 'command-panel.item.command-prefix'))
+    assert.ok(result.errors.some(issue => issue.code === 'command-panel.item.link-required'))
+    assert.ok(result.errors.some(issue => issue.code === 'command-panel.item.link-insecure'))
   })
 
   it('only_admin 必须是布尔值，未知类型报硬错误', () => {
-    const result = group([
-      { name: '/a', type: 'command', only_admin: 'yes' },
-      { name: '/b', type: 'unknown', only_admin: false },
+    const result = command([
+      { name: '/a', type: 'command', only_admin: 'yes', scopes: ['group'] },
+      { name: '/b', type: 'unknown', only_admin: false, scopes: ['group'] },
     ])
-    assert.ok(result.errors.some(issue => issue.code === 'group-panel.item.only-admin-invalid'))
-    assert.ok(result.errors.some(issue => issue.code === 'group-panel.item.type-invalid'))
+    assert.ok(result.errors.some(issue => issue.code === 'command-panel.item.only-admin-invalid'))
+    assert.ok(result.errors.some(issue => issue.code === 'command-panel.item.type-invalid'))
   })
 
-  it('描述展示宽度超过 30 只报警告', () => {
-    const result = group([{ name: '/a', desc: '很长的描述'.repeat(8), type: 'command', only_admin: false }])
-    assert.ok(result.warnings.some(issue => issue.code === 'group-panel.item.desc-too-wide'))
-    assert.equal(result.errors.length, 0)
+  it('名称与描述展示宽度超限报硬错误', () => {
+    const result = command([
+      { name: '/很长的指令名称', desc: '很长的描述'.repeat(8), type: 'command', only_admin: false, scopes: ['group'] },
+    ])
+    assert.ok(result.errors.some(issue => issue.code === 'command-panel.item.name-too-wide'))
+    assert.ok(result.errors.some(issue => issue.code === 'command-panel.item.desc-too-wide'))
+  })
+
+  it('同名条目只在共同场景内报警告', () => {
+    const result = command([
+      { name: '/dup', type: 'command', scopes: ['group'] },
+      { name: '/dup', type: 'command', scopes: ['c2c'] },
+    ])
+    assert.equal(result.warnings.some(issue => issue.code === 'command-panel.item.name-duplicate'), false)
+
+    const sameScope = command([
+      { name: '/dup', type: 'command', scopes: ['group'] },
+      { name: '/dup', type: 'command', scopes: ['group', 'c2c'] },
+    ])
+    assert.ok(sameScope.warnings.some(issue => issue.code === 'command-panel.item.name-duplicate'))
   })
 })

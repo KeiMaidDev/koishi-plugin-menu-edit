@@ -7,16 +7,20 @@
  * 平台契约（adapter-qq-crack `src/types.ts`）：MenuItem.switch 是 `{ switch_id, default }`
  * 对象，SubMenuItemType 只允许 `send_message` / `link`。
  */
+import { panelItemBelongsTo, panelItemScopes, scopeItemCounts } from './command-panel'
 import { isRecord } from './guards'
 import {
-  GROUP_PANEL_ITEM_TYPES,
-  GROUP_PANEL_MAX_ITEMS,
+  COMMAND_PANEL_ITEM_TYPES,
+  COMMAND_PANEL_MAX_ITEMS,
+  PANEL_SCOPE_LABELS,
+  PANEL_SCOPES,
   PRIVATE_MENU_ITEM_TYPES,
   PRIVATE_MENU_MAX_ITEMS,
   PRIVATE_MENU_MAX_SUB_ITEMS,
   PRIVATE_MENU_SUB_ITEM_TYPES,
-  type GroupPanelConfiguration,
+  type CommandPanelConfiguration,
   type PanelConfiguration,
+  type PanelScope,
   type PrivateMenuConfiguration,
   type ValidationIssue,
   type ValidationResult,
@@ -24,7 +28,7 @@ import {
 
 const MENU_ITEM_TYPES = new Set<string>(PRIVATE_MENU_ITEM_TYPES)
 const SUB_MENU_ITEM_TYPES = new Set<string>(PRIVATE_MENU_SUB_ITEM_TYPES)
-const GROUP_PANEL_ITEM_TYPE_SET = new Set<string>(GROUP_PANEL_ITEM_TYPES)
+const COMMAND_PANEL_ITEM_TYPE_SET = new Set<string>(COMMAND_PANEL_ITEM_TYPES)
 
 /** 名称展示宽度；中文等宽字符按 2 计，与适配器/平台限制口径一致。 */
 export function displayWidth(text: string): number {
@@ -88,7 +92,7 @@ function validateLink(value: unknown, path: string, issues: ValidationIssue[], c
   if (!isNonEmptyString(value)) {
     issues.push(error(`${codePrefix}.link-required`, path, 'link 类型必须填写链接。'))
   } else if (!value.startsWith('https://')) {
-    issues.push(warning(`${codePrefix}.link-insecure`, path, '链接不以 https:// 开头。'))
+    issues.push(warning(`${codePrefix}.link-insecure`, path, '链接必须以 https:// 开头。'))
   }
 }
 
@@ -207,59 +211,79 @@ export function validatePrivateMenu(menu: PrivateMenuConfiguration): ValidationR
   return partition(issues)
 }
 
-/** 校验 Group Panel；首版只覆盖数量、必填字段与简单警告。 */
-export function validateGroupPanel(panel: GroupPanelConfiguration): ValidationResult {
+/** 校验 Command Panel；覆盖各场景数量、必填字段、使用场景与简单警告。 */
+export function validateCommandPanel(panel: CommandPanelConfiguration): ValidationResult {
   const issues: ValidationIssue[] = []
   const items = Array.isArray(panel.items) ? panel.items : []
   if (!Array.isArray(panel.items)) {
-    issues.push(error('group-panel.items.not-array', 'groupPanel.items', 'groupPanel.items 必须是数组。'))
-  }
-  if (items.length > GROUP_PANEL_MAX_ITEMS) {
-    issues.push(error(
-      'group-panel.items.max',
-      'groupPanel.items',
-      `Group Panel 最多 ${GROUP_PANEL_MAX_ITEMS} 项，当前 ${items.length} 项。`,
-    ))
+    issues.push(error('command-panel.items.not-array', 'commandPanel.items', 'commandPanel.items 必须是数组。'))
   }
 
-  const duplicated = duplicateNames(items)
+  const counts = scopeItemCounts(panel)
+  for (const scope of PANEL_SCOPES) {
+    if (counts[scope] > COMMAND_PANEL_MAX_ITEMS) {
+      issues.push(error(
+        'command-panel.scope.max',
+        `commandPanel.scopes.${scope}`,
+        `${PANEL_SCOPE_LABELS[scope]} 场景最多 ${COMMAND_PANEL_MAX_ITEMS} 项，当前 ${counts[scope]} 项。`,
+      ))
+    }
+  }
+
+  const duplicatedByScope = Object.fromEntries(
+    PANEL_SCOPES.map(scope => [scope, duplicateNames(items.filter(item => panelItemBelongsTo(item, scope)))]),
+  ) as Record<PanelScope, Set<string>>
+
   items.forEach((item, index) => {
-    const path = `groupPanel.items[${index}]`
+    const path = `commandPanel.items[${index}]`
     if (!isRecord(item)) {
-      issues.push(error('group-panel.item.not-object', path, '面板条目必须是对象。'))
+      issues.push(error('command-panel.item.not-object', path, '面板条目必须是对象。'))
       return
     }
+
+    const scopes = panelItemScopes(item)
+    if (scopes.length === 0) {
+      issues.push(error('command-panel.item.scopes-required', `${path}.scopes`, '面板条目至少勾选一个使用场景。'))
+    }
+
     if (!isNonEmptyString(item.name)) {
-      issues.push(error('group-panel.item.name-required', `${path}.name`, '面板条目名称不能为空。'))
+      issues.push(error('command-panel.item.name-required', `${path}.name`, '面板条目名称不能为空。'))
     } else {
-      if (displayWidth(item.name.trim()) > 14) {
-        issues.push(warning('group-panel.item.name-too-wide', `${path}.name`, '名称展示宽度超过约 14 个字符。'))
+      const name = item.name.trim()
+      if (displayWidth(name) > 14) {
+        issues.push(error('command-panel.item.name-too-wide', `${path}.name`, '名称展示宽度超过约 14 个字符。'))
       }
-      if (duplicated.has(item.name.trim())) {
-        issues.push(warning('group-panel.item.name-duplicate', `${path}.name`, `同级存在重名条目「${item.name.trim()}」。`))
+      for (const scope of scopes) {
+        if (duplicatedByScope[scope].has(name)) {
+          issues.push(warning(
+            'command-panel.item.name-duplicate',
+            `${path}.name`,
+            `${PANEL_SCOPE_LABELS[scope]} 场景内存在重名条目「${name}」。`,
+          ))
+        }
       }
     }
 
     if (item.only_admin !== undefined && typeof item.only_admin !== 'boolean') {
-      issues.push(error('group-panel.item.only-admin-invalid', `${path}.only_admin`, 'only_admin 必须是布尔值。'))
+      issues.push(error('command-panel.item.only-admin-invalid', `${path}.only_admin`, 'only_admin 必须是布尔值。'))
     }
 
     const type = item.type
-    if (typeof type !== 'string' || !GROUP_PANEL_ITEM_TYPE_SET.has(type)) {
-      issues.push(error('group-panel.item.type-invalid', `${path}.type`, `不支持的条目类型：${String(type)}。`))
+    if (typeof type !== 'string' || !COMMAND_PANEL_ITEM_TYPE_SET.has(type)) {
+      issues.push(error('command-panel.item.type-invalid', `${path}.type`, `不支持的条目类型：${String(type)}。`))
       return
     }
     if (type === 'link') {
       if (!isNonEmptyString(item.link)) {
-        issues.push(error('group-panel.item.link-required', `${path}.link`, 'link 类型必须填写链接。'))
+        issues.push(error('command-panel.item.link-required', `${path}.link`, 'link 类型必须填写链接。'))
       } else if (!item.link.startsWith('https://')) {
-        issues.push(warning('group-panel.item.link-insecure', `${path}.link`, '链接不以 https:// 开头。'))
+        issues.push(error('command-panel.item.link-insecure', `${path}.link`, '链接必须以 https:// 开头。'))
       }
     } else if (typeof item.name === 'string' && item.name.trim() && !item.name.trim().startsWith('/')) {
-      issues.push(warning('group-panel.item.command-prefix', `${path}.name`, 'command 名称建议以 / 开头。'))
+      issues.push(error('command-panel.item.command-prefix', `${path}.name`, 'command 名称必须以 / 开头。'))
     }
     if (typeof item.desc === 'string' && displayWidth(item.desc) > 30) {
-      issues.push(warning('group-panel.item.desc-too-wide', `${path}.desc`, '描述展示宽度超过约 30 个字符。'))
+      issues.push(error('command-panel.item.desc-too-wide', `${path}.desc`, '描述展示宽度超过约 30 个字符。'))
     }
   })
 
@@ -269,10 +293,10 @@ export function validateGroupPanel(panel: GroupPanelConfiguration): ValidationRe
 /** 校验整份 Panel Configuration，两个 surface 的结果合并。 */
 export function validatePanelConfiguration(configuration: PanelConfiguration): ValidationResult {
   const privateMenu = validatePrivateMenu(configuration.privateMenu)
-  const groupPanel = validateGroupPanel(configuration.groupPanel)
+  const commandPanel = validateCommandPanel(configuration.commandPanel)
   return {
-    errors: [...privateMenu.errors, ...groupPanel.errors],
-    warnings: [...privateMenu.warnings, ...groupPanel.warnings],
+    errors: [...privateMenu.errors, ...commandPanel.errors],
+    warnings: [...privateMenu.warnings, ...commandPanel.warnings],
   }
 }
 

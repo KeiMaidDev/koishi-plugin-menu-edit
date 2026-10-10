@@ -12,16 +12,20 @@ _Avoid_: 指令编辑器, 菜单后台
 QQ 私聊场景中展示的自定义菜单。
 _Avoid_: 快捷菜单, 私人菜单
 
-**Group Panel**:
-QQ 群聊场景中展示的指令面板。
-_Avoid_: 群菜单, 指令面板配置
+**Command Panel**:
+指令面板。QQ 机器人在使用场景中以面板形式展示的指令或链接配置。
+_Avoid_: 群聊面板, 群菜单, 指令面板配置
 
 **Private Menu Item**:
 Private Menu 中的单个条目，可发送消息、打开链接、切换开关或展开子菜单。
 _Avoid_: 快捷项, 菜单按钮
 
+**Usage Scope**:
+指令面板生效的 QQ 场景，取值为 c2c（消息列表）、group（QQ群）、channel（QQ频道）、dm（频道私信）。
+_Avoid_: 平台, 频道, 作用域
+
 **Panel Item**:
-Group Panel 中的单个指令或链接条目。
+Command Panel 中的单个指令或链接条目。一条 Panel Item 可以勾选多个使用场景。
 _Avoid_: 指令卡, 面板按钮
 
 **Bot Instance**:
@@ -41,7 +45,7 @@ _Avoid_: 临时配置, 未保存内容
 _Avoid_: 线上版本, 当前菜单
 
 **Publish**:
-将 Draft 下发到某个 Bot Instance 的 Private Menu 和 Group Panel，并把成功结果记录为 Published Revision。
+将 Draft 下发到某个 Bot Instance 的 Private Menu 和 Command Panel，并把成功结果记录为 Published Revision。
 _Avoid_: 同步, 保存, 上架
 
 **Drift**:
@@ -49,11 +53,11 @@ _Avoid_: 同步, 保存, 上架
 _Avoid_: 差异, 变更
 
 **Platform State**:
-从 QQ API 实时读取的 Private Menu 与 Group Panel 内容。
+从 QQ API 实时读取的 Private Menu 与各使用场景 Command Panel 内容。
 _Avoid_: 线上状态, 远端配置
 
 **Managed Panel**:
-某个 Bot Instance 中被 Menu Edit Panel 接管并可发布的唯一 Group Panel。
+某个 Bot Instance 的某个使用场景中被 Menu Edit Panel 接管并可发布的唯一 all 指令面板。
 _Avoid_: 目标面板, 主面板
 
 ## Private Menu UI

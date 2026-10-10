@@ -127,22 +127,22 @@ export function cloneAt(items: unknown[], index: number): unknown[] {
 }
 
 /**
- * 客户端轻量归一：保证 privateMenu / groupPanel 存在且 items 是数组，其余未知字段保留。
+ * 客户端轻量归一：保证 privateMenu / commandPanel 存在且 items 是数组，其余未知字段保留。
  * 与 service 端 normalizePanelConfiguration 的口径一致，只是失败时由调用方处理。
  */
 export function normalizeConfiguration(value: unknown): PanelConfiguration {
   const record = isRecord(value) ? value : {}
   const privateMenu = isRecord(record.privateMenu) ? record.privateMenu : {}
-  const groupPanel = isRecord(record.groupPanel) ? record.groupPanel : {}
+  const commandPanel = isRecord(record.commandPanel) ? record.commandPanel : {}
   return {
     ...record,
     privateMenu: {
       ...privateMenu,
       items: Array.isArray(privateMenu.items) ? privateMenu.items : [],
     },
-    groupPanel: {
-      ...groupPanel,
-      items: Array.isArray(groupPanel.items) ? groupPanel.items : [],
+    commandPanel: {
+      ...commandPanel,
+      items: Array.isArray(commandPanel.items) ? commandPanel.items : [],
     },
   }
 }

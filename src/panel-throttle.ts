@@ -1,5 +1,5 @@
 /**
- * Group Panel 写入节流（QQ /v2/panels 连续写入至少间隔 6500ms）。
+ * Command Panel 写入节流（QQ /v2/panels 连续写入至少间隔 6500ms）。
  *
  * 节流按 AppID 串行：并发的 import / publish / cleanup 都经过同一个队列，
  * 后一次写入必须等前一次写入起点满 interval，客户端无法通过并发请求绕过。

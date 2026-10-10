@@ -14,10 +14,10 @@ import type {
   BotInstanceSummary,
   DiscardDraftInput,
   DraftMutationResult,
-  GroupPanelPublishInput,
-  GroupPanelPublishResult,
-  ImportGroupPanelInput,
-  ImportGroupPanelResult,
+  CommandPanelPublishInput,
+  CommandPanelPublishResult,
+  ImportCommandPanelInput,
+  ImportCommandPanelResult,
   ImportPrivateMenuInput,
   ImportPrivateMenuResult,
   PrivateMenuPublishInput,
@@ -34,8 +34,8 @@ declare module '@koishijs/console' {
     'menu-edit/discard-draft'(input: DiscardDraftInput): Promise<DraftMutationResult>
     'menu-edit/import-private-menu'(input: ImportPrivateMenuInput): Promise<ImportPrivateMenuResult>
     'menu-edit/publish-private-menu'(input: PrivateMenuPublishInput): Promise<PrivateMenuPublishResult>
-    'menu-edit/import-group-panel'(input: ImportGroupPanelInput): Promise<ImportGroupPanelResult>
-    'menu-edit/publish-group-panel'(input: GroupPanelPublishInput): Promise<GroupPanelPublishResult>
+    'menu-edit/import-command-panel'(input: ImportCommandPanelInput): Promise<ImportCommandPanelResult>
+    'menu-edit/publish-command-panel'(input: CommandPanelPublishInput): Promise<CommandPanelPublishResult>
   }
 }
 
@@ -111,11 +111,11 @@ export const setupConsole = Object.assign(
     ctx.console.addListener(`${CONSOLE_API_PREFIX}/publish-private-menu`, (input) =>
       run('Publish Private Menu', () => service.publishPrivateMenu(input as PrivateMenuPublishInput)), requireAuthority)
 
-    ctx.console.addListener(`${CONSOLE_API_PREFIX}/import-group-panel`, (input) =>
-      run('导入 Group Panel', () => service.importGroupPanel(input as ImportGroupPanelInput)), requireAuthority)
+    ctx.console.addListener(`${CONSOLE_API_PREFIX}/import-command-panel`, (input) =>
+      run('导入 Command Panel', () => service.importCommandPanel(input as ImportCommandPanelInput)), requireAuthority)
 
-    ctx.console.addListener(`${CONSOLE_API_PREFIX}/publish-group-panel`, (input) =>
-      run('Publish Group Panel', () => service.publishGroupPanel(input as GroupPanelPublishInput)), requireAuthority)
+    ctx.console.addListener(`${CONSOLE_API_PREFIX}/publish-command-panel`, (input) =>
+      run('Publish Command Panel', () => service.publishCommandPanel(input as CommandPanelPublishInput)), requireAuthority)
 
     ctx.console.addEntry(resolveConsoleEntry(ctx))
   },

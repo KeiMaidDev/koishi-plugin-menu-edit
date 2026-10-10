@@ -6,10 +6,10 @@
  */
 import { isRecord } from './guards'
 import {
-  emptyGroupPanel,
-  emptyPrivateMenu,
+  emptyCommandPanel,
   emptyPanelConfiguration,
-  type GroupPanelConfiguration,
+  emptyPrivateMenu,
+  type CommandPanelConfiguration,
   type PanelConfiguration,
   type PrivateMenuConfiguration,
 } from './types'
@@ -36,14 +36,14 @@ export function normalizePrivateMenu(value: unknown): PrivateMenuConfiguration {
   return { ...value, items: Array.isArray(rawItems) ? rawItems : [] }
 }
 
-export function normalizeGroupPanel(value: unknown): GroupPanelConfiguration {
-  if (value === undefined || value === null) return emptyGroupPanel()
+export function normalizeCommandPanel(value: unknown): CommandPanelConfiguration {
+  if (value === undefined || value === null) return emptyCommandPanel()
   if (!isRecord(value)) {
-    throw new MenuConfigurationError('groupPanel', 'groupPanel 必须是对象。')
+    throw new MenuConfigurationError('commandPanel', 'commandPanel 必须是对象。')
   }
   const rawItems = value.items
   if (rawItems !== undefined && rawItems !== null && !Array.isArray(rawItems)) {
-    throw new MenuConfigurationError('groupPanel.items', 'groupPanel.items 必须是数组。')
+    throw new MenuConfigurationError('commandPanel.items', 'commandPanel.items 必须是数组。')
   }
   return { ...value, items: Array.isArray(rawItems) ? rawItems : [] }
 }
@@ -60,6 +60,6 @@ export function normalizePanelConfiguration(value: unknown): PanelConfiguration 
   return {
     ...value,
     privateMenu: normalizePrivateMenu(value.privateMenu),
-    groupPanel: normalizeGroupPanel(value.groupPanel),
+    commandPanel: normalizeCommandPanel(value.commandPanel),
   }
 }

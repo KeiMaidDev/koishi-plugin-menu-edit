@@ -80,3 +80,58 @@ describe('MenuStateStore：原子替换与备份', () => {
   })
 })
 
+
+describe('MenuStateStore：schema 迁移与版本拒绝', () => {
+  it('读取 schemaVersion 1 时迁移为 2：groupPanel → commandPanel，条目补 scopes: [group]', async () => {
+    const store = createStore()
+    const v1 = {
+      schemaVersion: 1,
+      appId: '100',
+      revision: 5,
+      updatedAt: '2026-10-09T00:00:00.000Z',
+      importedConfiguration: {
+        privateMenu: { items: [] },
+        groupPanel: { remark: 'imported', items: [{ name: '/a', type: 'command' }] },
+      },
+      draft: {
+        privateMenu: { items: [] },
+        groupPanel: { remark: 'menu-edit', items: [{ name: '/g', type: 'command', futureField: 1 }] },
+      },
+      published: {
+        privateMenu: null,
+        groupPanel: {
+          panelId: 'p1',
+          panel: { remark: 'menu-edit', items: [{ name: '/g', type: 'command' }] },
+          version: 3,
+          publishedAt: '2026-10-09T00:00:00.000Z',
+          cleanup: { panelIds: [], updatedAt: null },
+        },
+      },
+    }
+    await store.write('100', makeState('100', { revision: 1 }))
+    writeFileSync(store.pathFor('100'), JSON.stringify(v1), 'utf8')
+
+    const state = await store.read('100')
+    assert.equal(state?.schemaVersion, 2)
+    assert.equal('groupPanel' in (state?.draft as Record<string, unknown>), false)
+    assert.deepEqual(state?.draft.commandPanel.items, [{ name: '/g', type: 'command', futureField: 1, scopes: ['group'] }])
+    assert.deepEqual(state?.importedConfiguration?.commandPanel.items, [{ name: '/a', type: 'command', scopes: ['group'] }])
+    assert.equal(state?.published.commandPanels.group?.panelId, 'p1')
+    assert.equal(state?.published.commandPanels.group?.version, 3)
+    assert.deepEqual(state?.published.commandPanels.group?.panel.items, [{ name: '/g', type: 'command' }])
+    assert.equal('groupPanel' in (state?.published as unknown as Record<string, unknown>), false)
+  })
+
+  it('读到未知的更高版本时拒绝静默覆盖，且不回退 .bak', async () => {
+    const store = createStore()
+    await store.write('100', makeState('100', { revision: 2 }))
+    const raw = JSON.parse(await readFile(store.pathFor('100'), 'utf8')) as Record<string, unknown>
+    raw.schemaVersion = 99
+    writeFileSync(store.pathFor('100'), JSON.stringify(raw), 'utf8')
+
+    await assert.rejects(
+      () => store.read('100'),
+      (error: unknown) => error instanceof MenuStateStoreError && error.reason === 'state-version-unsupported',
+    )
+  })
+})

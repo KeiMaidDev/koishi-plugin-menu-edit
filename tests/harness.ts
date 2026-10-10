@@ -4,14 +4,15 @@ import { join } from 'node:path'
 import type { Context } from 'koishi'
 import { createKoishiBotRegistry } from '../src/bot-registry'
 import { MenuService } from '../src/menu-service'
-import { MenuPlatformError, type MenuPlatform, type PlatformGroupPanel, type PlatformPrivateMenu } from '../src/platform'
+import { MenuPlatformError, type MenuPlatform, type PlatformCommandPanel, type PlatformPrivateMenu } from '../src/platform'
 import { MenuStateStore } from '../src/state-store'
 import {
   deepClone,
   emptyPanelConfiguration,
   MENU_STATE_SCHEMA_VERSION,
-  type GroupPanelConfiguration,
+  type CommandPanelConfiguration,
   type MenuState,
+  type PanelScope,
   type PrivateMenuConfiguration,
 } from '../src/types'
 
@@ -50,21 +51,22 @@ export function makeState(appId: string, overrides: Partial<MenuState> = {}): Me
     updatedAt: '2026-10-10T00:00:00.000Z',
     importedConfiguration: null,
     draft: emptyPanelConfiguration(),
-    published: { privateMenu: null, groupPanel: null },
+    published: { privateMenu: null, commandPanels: {} },
     ...overrides,
   }
 }
 
-export interface FakeGroupPanelSeed {
+export interface FakeCommandPanelSeed {
   targetType?: string
   remark?: string
   updatedAt?: string | null
   version?: number | null
 }
 
-export interface RecordedGroupWrite {
+export interface RecordedPanelWrite {
   appId: string
   op: 'create' | 'modify' | 'delete'
+  scope: PanelScope | null
   panelId: string
   at: number
 }
@@ -73,21 +75,22 @@ export interface RecordedGroupWrite {
 export class FakePlatform implements MenuPlatform {
   readonly menus = new Map<string, PlatformPrivateMenu>()
   readonly setCalls: { appId: string; menu: PrivateMenuConfiguration }[] = []
-  readonly groupWrites: RecordedGroupWrite[] = []
+  readonly panelWrites: RecordedPanelWrite[] = []
   getError: unknown = null
   setError: unknown = null
-  listGroupError: unknown = null
-  createGroupError: unknown = null
-  modifyGroupError: unknown = null
-  deleteGroupErrors = new Map<string, unknown>()
+  listPanelError: unknown = null
+  createPanelError: unknown = null
+  createPanelErrors = new Map<PanelScope, unknown>()
+  modifyPanelError: unknown = null
+  deletePanelErrors = new Map<string, unknown>()
   private nextVersion = 1
   private nextPanelVersion = 1
   private nextPanelSequence = 1
-  private readonly panels = new Map<string, Map<string, PlatformGroupPanel>>()
+  private readonly panels = new Map<string, Map<string, PlatformCommandPanel>>()
 
   constructor(private readonly clock: () => number = () => Date.now()) {}
 
-  private panelsOf(appId: string): Map<string, PlatformGroupPanel> {
+  private panelsOf(appId: string): Map<string, PlatformCommandPanel> {
     let panels = this.panels.get(appId)
     if (!panels) {
       panels = new Map()
@@ -101,10 +104,17 @@ export class FakePlatform implements MenuPlatform {
     this.menus.set(appId, { menu: deepClone(menu), version })
   }
 
-  /** 直接写入平台侧 group 面板，模拟外部已有内容或外部写入者。 */
-  seedGroupPanel(appId: string, panelId: string, panel: GroupPanelConfiguration, options: FakeGroupPanelSeed = {}): void {
+  /** 直接写入平台侧指定场景的面板，模拟外部已有内容或外部写入者。 */
+  seedCommandPanel(
+    appId: string,
+    panelId: string,
+    scope: PanelScope,
+    panel: CommandPanelConfiguration,
+    options: FakeCommandPanelSeed = {},
+  ): void {
     this.panelsOf(appId).set(panelId, {
       panelId,
+      scope,
       targetType: options.targetType ?? 'all',
       remark: options.remark ?? (typeof panel.remark === 'string' ? panel.remark : ''),
       updatedAt: options.updatedAt ?? '2026-10-10T00:00:00.000Z',
@@ -113,14 +123,17 @@ export class FakePlatform implements MenuPlatform {
     })
   }
 
-  listOf(appId: string): PlatformGroupPanel[] {
-    return [...this.panelsOf(appId).values()].map(panel => deepClone(panel))
+  /** 列出平台侧面板；传 scope 时只返回该场景。 */
+  listOf(appId: string, scope?: PanelScope): PlatformCommandPanel[] {
+    const all = [...this.panelsOf(appId).values()].map(panel => deepClone(panel))
+    return scope ? all.filter(panel => panel.scope === scope) : all
   }
 
-  /** 模拟外部写入者直接删除某个 group 面板。 */
-  removeGroupPanel(appId: string, panelId: string): void {
+  /** 模拟外部写入者直接删除某个面板。 */
+  removeCommandPanel(appId: string, panelId: string): void {
     this.panelsOf(appId).delete(panelId)
   }
+
   async getPrivateMenu(appId: string): Promise<PlatformPrivateMenu> {
     if (this.getError) throw this.getError
     return deepClone(this.menus.get(appId) ?? { menu: { items: [] }, version: null })
@@ -134,29 +147,39 @@ export class FakePlatform implements MenuPlatform {
     return { version }
   }
 
-  async listGroupPanels(appId: string): Promise<PlatformGroupPanel[]> {
-    if (this.listGroupError) throw this.listGroupError
-    return this.listOf(appId)
+  async listCommandPanels(appId: string, scope: PanelScope): Promise<PlatformCommandPanel[]> {
+    if (this.listPanelError) throw this.listPanelError
+    return this.listOf(appId, scope)
   }
 
-  async createGroupPanel(appId: string, panel: GroupPanelConfiguration): Promise<{ panelId: string; version: number | null }> {
-    if (this.createGroupError) throw this.createGroupError
+  async createCommandPanel(
+    appId: string,
+    scope: PanelScope,
+    panel: CommandPanelConfiguration,
+  ): Promise<{ panelId: string; version: number | null }> {
+    const createError = this.createPanelErrors.get(scope) ?? this.createPanelError
+    if (createError) throw createError
     const panelId = `panel-${this.nextPanelSequence++}`
     const version = this.nextPanelVersion++
     this.panelsOf(appId).set(panelId, {
       panelId,
+      scope,
       targetType: 'all',
       remark: typeof panel.remark === 'string' ? panel.remark : '',
       updatedAt: new Date(this.clock()).toISOString(),
       version,
       panel: deepClone(panel),
     })
-    this.groupWrites.push({ appId, op: 'create', panelId, at: this.clock() })
+    this.panelWrites.push({ appId, op: 'create', scope, panelId, at: this.clock() })
     return { panelId, version }
   }
 
-  async modifyGroupPanel(appId: string, panelId: string, panel: GroupPanelConfiguration): Promise<{ version: number | null }> {
-    if (this.modifyGroupError) throw this.modifyGroupError
+  async modifyCommandPanel(
+    appId: string,
+    panelId: string,
+    panel: CommandPanelConfiguration,
+  ): Promise<{ version: number | null }> {
+    if (this.modifyPanelError) throw this.modifyPanelError
     const existing = this.panelsOf(appId).get(panelId)
     if (!existing) throw new MenuPlatformError('panel-missing', `panel ${panelId} 不存在`)
     const version = this.nextPanelVersion++
@@ -167,15 +190,16 @@ export class FakePlatform implements MenuPlatform {
       version,
       panel: deepClone(panel),
     })
-    this.groupWrites.push({ appId, op: 'modify', panelId, at: this.clock() })
+    this.panelWrites.push({ appId, op: 'modify', scope: existing.scope, panelId, at: this.clock() })
     return { version }
   }
 
-  async deleteGroupPanel(appId: string, panelId: string): Promise<void> {
-    const error = this.deleteGroupErrors.get(panelId)
+  async deleteCommandPanel(appId: string, panelId: string): Promise<void> {
+    const error = this.deletePanelErrors.get(panelId)
     if (error) throw error
+    const existing = this.panelsOf(appId).get(panelId)
     this.panelsOf(appId).delete(panelId)
-    this.groupWrites.push({ appId, op: 'delete', panelId, at: this.clock() })
+    this.panelWrites.push({ appId, op: 'delete', scope: existing?.scope ?? null, panelId, at: this.clock() })
   }
 }
 

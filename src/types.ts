@@ -6,7 +6,23 @@
  */
 
 /** 状态文件的 schema 版本；读取到未知版本时拒绝静默覆盖。 */
-export const MENU_STATE_SCHEMA_VERSION = 1
+export const MENU_STATE_SCHEMA_VERSION = 2
+
+/**
+ * 指令面板的使用场景；与官方 `/v2/panels` 的 `scope` 取值一致。
+ *
+ * 顺序即发布顺序，也是导入合并时的处理顺序。
+ */
+export const PANEL_SCOPES = ['channel', 'dm', 'group', 'c2c'] as const
+export type PanelScope = (typeof PANEL_SCOPES)[number]
+
+/** 使用场景的页面文案。 */
+export const PANEL_SCOPE_LABELS: Record<PanelScope, string> = {
+  channel: 'QQ频道',
+  dm: '频道私信',
+  group: 'QQ群',
+  c2c: '消息列表',
+}
 
 /** 页面机器人列表里展示的 Bot Instance 摘要。 */
 export interface BotInstanceSummary {
@@ -26,21 +42,28 @@ export interface PrivateMenuConfiguration {
   [key: string]: unknown
 }
 
-/** Group Panel 的 Panel Configuration 片段。 */
-export interface GroupPanelConfiguration {
+/**
+ * 指令面板的 Panel Configuration 片段。
+ *
+ * Draft 里只保留一份 `items`；每条 Panel Item 自带本地字段 `scopes`，各场景面板内容
+ * 在发布时按 `scopes` 过滤派生。`scopes` 不会发往平台。
+ */
+export interface CommandPanelConfiguration {
   items: unknown[]
   remark?: string
+  /** 面板级未知字段，按场景保存；发布派生该场景面板时原样带出。 */
+  scopeExtras?: Partial<Record<PanelScope, Record<string, unknown>>>
   [key: string]: unknown
 }
 
 /**
- * Private Menu 与 Group Panel 的完整编辑内容。
+ * Private Menu 与 Command Panel 的完整编辑内容。
  *
  * 允许携带当前版本不认识的字段，保存与发布时原样保留，避免静默破坏未来平台字段。
  */
 export interface PanelConfiguration {
   privateMenu: PrivateMenuConfiguration
-  groupPanel: GroupPanelConfiguration
+  commandPanel: CommandPanelConfiguration
   [key: string]: unknown
 }
 
@@ -51,10 +74,12 @@ export interface PublishedPrivateMenu {
   publishedAt: string
 }
 
-/** 已成功发布到平台的 Group Panel 快照，附待清理面板列表。 */
-export interface PublishedGroupPanel {
+/** 已成功发布到平台的单个使用场景面板快照，附待清理面板列表。 */
+export interface PublishedCommandPanel {
+  scope: PanelScope
   panelId: string
-  panel: GroupPanelConfiguration
+  /** 已写入平台的场景内容；条目上的本地字段 `scopes` 已剥掉。 */
+  panel: CommandPanelConfiguration
   version: number | null
   publishedAt: string
   cleanup: {
@@ -63,10 +88,13 @@ export interface PublishedGroupPanel {
   }
 }
 
-/** 两个 surface 各自的 Published Revision；未发布过则为 null。 */
+/** 四个使用场景各自的 Published Revision；未接管的场景缺省。 */
+export type PublishedCommandPanels = Partial<Record<PanelScope, PublishedCommandPanel>>
+
+/** Private Menu 与各场景指令面板最近一次成功发布的内容。 */
 export interface PublishedRevisions {
   privateMenu: PublishedPrivateMenu | null
-  groupPanel: PublishedGroupPanel | null
+  commandPanels: PublishedCommandPanels
 }
 
 /** 单个 AppID 的持久化状态。 */
@@ -80,7 +108,7 @@ export interface MenuState {
   importedConfiguration: PanelConfiguration | null
   /** 正在编辑、尚未发布的 Panel Configuration。 */
   draft: PanelConfiguration
-  /** 两个 surface 最近一次成功发布的内容。 */
+  /** Private Menu 与各场景面板最近一次成功发布的内容。 */
   published: PublishedRevisions
 }
 
@@ -128,7 +156,7 @@ export function emptyPrivateMenu(): PrivateMenuConfiguration {
   return { items: [] }
 }
 
-export function emptyGroupPanel(): GroupPanelConfiguration {
+export function emptyCommandPanel(): CommandPanelConfiguration {
   return { remark: 'menu-edit', items: [] }
 }
 
@@ -136,7 +164,7 @@ export function emptyGroupPanel(): GroupPanelConfiguration {
 export function emptyPanelConfiguration(): PanelConfiguration {
   return {
     privateMenu: emptyPrivateMenu(),
-    groupPanel: emptyGroupPanel(),
+    commandPanel: emptyCommandPanel(),
   }
 }
 
@@ -167,8 +195,6 @@ export interface PrivateMenuSwitch {
 export const PRIVATE_MENU_MAX_ITEMS = 10
 /** 单个 menu 子菜单项上限。 */
 export const PRIVATE_MENU_MAX_SUB_ITEMS = 5
-/** Group Panel 条目上限。 */
-export const GROUP_PANEL_MAX_ITEMS = 20
 
 export type ValidationSeverity = 'error' | 'warning'
 
@@ -210,7 +236,7 @@ export interface ImportPrivateMenuFailure {
 
 export type ImportPrivateMenuResult = ImportPrivateMenuSuccess | ImportPrivateMenuFailure
 
-/** Publish 目前只发布 Private Menu；Group Panel 写入由后续 issue 接入。 */
+/** Publish 目前只发布 Private Menu；Command Panel 写入走独立入口。 */
 export const PUBLISH_PRIVATE_MENU_SURFACE = 'privateMenu' as const
 
 export interface PrivateMenuPublishInput {
@@ -249,15 +275,18 @@ export interface PrivateMenuPublishFailure {
 export type PrivateMenuPublishResult = PrivateMenuPublishSuccess | PrivateMenuPublishFailure
 
 // ---------------------------------------------------------------------------
-// Group Panel 纵向链路（issue #4）：条目类型、接管候选、导入与发布结果。
+// Command Panel 纵向链路（issue #8）：条目类型、场景候选、导入与发布结果。
 // ---------------------------------------------------------------------------
 
-/** Group Panel Item 的平台类型（adapter PanelItemType）。 */
-export const GROUP_PANEL_ITEM_TYPES = ['command', 'link'] as const
-export type GroupPanelItemType = (typeof GROUP_PANEL_ITEM_TYPES)[number]
+/** Command Panel Item 的平台类型（adapter PanelItemType）。 */
+export const COMMAND_PANEL_ITEM_TYPES = ['command', 'link'] as const
+export type CommandPanelItemType = (typeof COMMAND_PANEL_ITEM_TYPES)[number]
 
-/** 发布前展示给用户确认的其他 group Panel 摘要。 */
-export interface GroupPanelCandidate {
+/** 单个使用场景的面板条目上限。 */
+export const COMMAND_PANEL_MAX_ITEMS = 20
+
+/** 发布前展示给用户确认的某个场景的 all 面板摘要。 */
+export interface CommandPanelCandidate {
   panelId: string
   remark: string
   updatedAt: string | null
@@ -265,26 +294,56 @@ export interface GroupPanelCandidate {
   itemSummary: string
 }
 
-/** 导入当前 Group Panel 的请求；多个候选时必须携带选中的 panelId。 */
-export interface ImportGroupPanelInput {
-  appId: string
-  panelId?: string
+/** 按使用场景分组的候选面板。 */
+export interface CommandPanelScopeCandidates {
+  scope: PanelScope
+  candidates: CommandPanelCandidate[]
 }
 
-export interface ImportGroupPanelSuccess {
+/** 单个场景的发布结果；整体 partial 由这些结果聚合得出。 */
+export type CommandPanelScopePublishStatus = 'success' | 'failed' | 'partial'
+
+export interface CommandPanelScopePublishResult {
+  scope: PanelScope
+  status: CommandPanelScopePublishStatus
+  /** 仅 failed 时给出稳定的平台错误码。 */
+  code?: 'bot-offline' | 'platform-error' | 'unknown-bot' | 'quantity-limit'
+  /** 仅 failed 时给出可展示的错误信息。 */
+  message?: string
+}
+
+/** 导入指令面板的请求；多个候选的场景必须携带选中的 panelId。 */
+export interface ImportCommandPanelInput {
+  appId: string
+  /** 场景 -> 选中的接管 panelId。 */
+  selections?: Partial<Record<PanelScope, string>>
+}
+
+/** 导入时同名但字段不一致的条目冲突。 */
+export interface CommandPanelImportConflict {
+  name: string
+  /** 冲突条目涉及的场景。 */
+  scopes: PanelScope[]
+  /** 参与冲突的字段变体数量。 */
+  variants: number
+}
+
+export interface ImportCommandPanelSuccess {
   ok: true
-  surface: 'groupPanel'
+  surface: 'commandPanel'
   /** 导入写入后的新 revision。 */
   revision: number
   importedAt: string
-  imported: GroupPanelConfiguration
-  /** 被接管的 Managed Panel ID；零候选时为新建面板的 ID。 */
-  managedPanelId: string
-  /** 本次是否新建了 Managed Panel。 */
-  created: boolean
+  imported: CommandPanelConfiguration
+  /** 每个被接管场景对应的 Managed Panel ID；零候选的场景缺省。 */
+  managedPanelIds: Partial<Record<PanelScope, string>>
+  /** 本次发现并保留的同名冲突条目。 */
+  conflicts: CommandPanelImportConflict[]
+  /** 平台已有但不接管、不删除的 specific 面板，按场景用于导入提示。 */
+  specificPanels: Partial<Record<PanelScope, CommandPanelCandidate[]>>
 }
 
-export type ImportGroupPanelFailureCode =
+export type ImportCommandPanelFailureCode =
   | 'unknown-bot'
   | 'bot-offline'
   | 'platform-error'
@@ -292,25 +351,26 @@ export type ImportGroupPanelFailureCode =
   | 'selection-required'
   | 'panel-missing'
 
-export interface ImportGroupPanelFailure {
+export interface ImportCommandPanelFailure {
   ok: false
-  surface: 'groupPanel'
-  code: ImportGroupPanelFailureCode
+  surface: 'commandPanel'
+  code: ImportCommandPanelFailureCode
   message: string
-  /** 仅 selection-required 时列出全部候选，其余为空数组。 */
-  candidates: GroupPanelCandidate[]
+  /** selection-required / panel-missing 时按场景列出候选，其余为空数组。 */
+  candidates: CommandPanelScopeCandidates[]
 }
 
-export type ImportGroupPanelResult = ImportGroupPanelSuccess | ImportGroupPanelFailure
+export type ImportCommandPanelResult = ImportCommandPanelSuccess | ImportCommandPanelFailure
 
-/** Publish Group Panel 的请求；cleanupPanelIds 是用户已确认删除的其他 group Panel。 */
-export interface GroupPanelPublishInput {
+/** Publish 指令面板的请求；cleanupPanelIds 是用户已确认删除的场景面板。 */
+export interface CommandPanelPublishInput {
   appId: string
   expectedRevision: number
-  cleanupPanelIds?: string[]
+  /** 场景 -> 用户已确认删除的 panelId。 */
+  cleanupPanelIds?: Partial<Record<PanelScope, string[]>>
 }
 
-export type GroupPanelPublishFailureCode =
+export type CommandPanelPublishFailureCode =
   | 'unknown-bot'
   | 'bot-offline'
   | 'revision-conflict'
@@ -319,29 +379,31 @@ export type GroupPanelPublishFailureCode =
   | 'quantity-limit'
   | 'cleanup-confirmation-required'
 
-export interface GroupPanelPublishSuccess {
+export interface CommandPanelPublishSuccess {
   ok: true
-  surface: 'groupPanel'
-  /** published 表示 Managed Panel 与其他面板都被清理；partial 表示仍有待清理面板。 */
+  surface: 'commandPanel'
+  /** published 表示全部场景成功；partial 表示有失败场景或待清理面板。 */
   status: 'published' | 'partial'
-  published: PublishedGroupPanel
+  published: PublishedCommandPanels
+  /** 各使用场景的 success / failed / partial 结果。 */
+  scopeResults: CommandPanelScopePublishResult[]
   /** 发布写入后的新 revision。 */
   revision: number
   warnings: ValidationIssue[]
 }
 
-export interface GroupPanelPublishFailure {
+export interface CommandPanelPublishFailure {
   ok: false
-  surface: 'groupPanel'
-  code: GroupPanelPublishFailureCode
+  surface: 'commandPanel'
+  code: CommandPanelPublishFailureCode
   message: string
   errors: ValidationIssue[]
   /** 失败时回传服务端当前 revision 与 Draft，便于 UI 重载或强制覆盖。 */
   revision: number
   draft: PanelConfiguration
-  published: PublishedGroupPanel | null
-  /** cleanup-confirmation-required 时列出待确认删除的面板，其余为空数组。 */
-  candidates: GroupPanelCandidate[]
+  published: PublishedCommandPanels
+  /** cleanup-confirmation-required 时按场景列出待确认删除的面板，其余为空数组。 */
+  candidates: CommandPanelScopeCandidates[]
 }
 
-export type GroupPanelPublishResult = GroupPanelPublishSuccess | GroupPanelPublishFailure
+export type CommandPanelPublishResult = CommandPanelPublishSuccess | CommandPanelPublishFailure

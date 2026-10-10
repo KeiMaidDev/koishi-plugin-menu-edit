@@ -3,10 +3,10 @@ import type {
   BotInstanceSummary,
   DiscardDraftInput,
   DraftMutationResult,
-  GroupPanelPublishInput,
-  GroupPanelPublishResult,
-  ImportGroupPanelInput,
-  ImportGroupPanelResult,
+  CommandPanelPublishInput,
+  CommandPanelPublishResult,
+  ImportCommandPanelInput,
+  ImportCommandPanelResult,
   ImportPrivateMenuInput,
   ImportPrivateMenuResult,
   PrivateMenuPublishInput,
@@ -20,12 +20,12 @@ export type {
   DiscardDraftInput,
   DraftMutationResult,
   DraftRevisionConflict,
-  GroupPanelCandidate,
-  GroupPanelItemType,
-  GroupPanelPublishInput,
-  GroupPanelPublishResult,
-  ImportGroupPanelInput,
-  ImportGroupPanelResult,
+  CommandPanelCandidate,
+  CommandPanelItemType,
+  CommandPanelPublishInput,
+  CommandPanelPublishResult,
+  ImportCommandPanelInput,
+  ImportCommandPanelResult,
   ImportPrivateMenuInput,
   ImportPrivateMenuResult,
   PanelConfiguration,
@@ -48,7 +48,7 @@ export const importPrivateMenu = (input: ImportPrivateMenuInput) =>
   send<ImportPrivateMenuResult>('menu-edit/import-private-menu', input)
 export const publishPrivateMenu = (input: PrivateMenuPublishInput) =>
   send<PrivateMenuPublishResult>('menu-edit/publish-private-menu', input)
-export const importGroupPanel = (input: ImportGroupPanelInput) =>
-  send<ImportGroupPanelResult>('menu-edit/import-group-panel', input)
-export const publishGroupPanel = (input: GroupPanelPublishInput) =>
-  send<GroupPanelPublishResult>('menu-edit/publish-group-panel', input)
+export const importCommandPanel = (input: ImportCommandPanelInput) =>
+  send<ImportCommandPanelResult>('menu-edit/import-command-panel', input)
+export const publishCommandPanel = (input: CommandPanelPublishInput) =>
+  send<CommandPanelPublishResult>('menu-edit/publish-command-panel', input)

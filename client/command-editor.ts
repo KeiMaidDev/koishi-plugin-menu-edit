@@ -1,12 +1,12 @@
 /**
- * Group Panel 结构化编辑器。
+ * Command Panel 结构化编辑器。
  *
- * 每个 Panel Item 是一张可折叠卡片：拖拽手柄 + 类型徽标 + 名称 + 管理员标记 + 校验状态 +
- * 上移/下移/复制/删除。展开后可编辑名称、描述、指令/链接与 only_admin。
- * 所有变更通过 `update:items` 上抛，由页面统一保存，组件自身不写服务端。
+ * 每个 Panel Item 是一张可折叠卡片：拖拽手柄 + 类型徽标 + 名称 + 使用场景数量 +
+ * 管理员标记 + 校验状态 + 上移/下移/复制/删除。展开后可编辑指令名、指令介绍、
+ * 权限菜单、使用场景与链接。所有变更通过 `update:items` 上抛，由页面统一保存。
  */
 import { defineComponent, h, reactive, type VNodeChild } from 'vue'
-import { GROUP_PANEL_MAX_ITEMS, type ValidationIssue } from '../src/types'
+import { COMMAND_PANEL_MAX_ITEMS, PANEL_SCOPES, type PanelScope, type ValidationIssue } from '../src/types'
 import {
   asRecord,
   cloneAt,
@@ -17,16 +17,21 @@ import {
 import {
   changePanelItemType,
   createPanelItem,
+  defaultScopes,
   PANEL_ITEM_TYPES,
   panelItemDesc,
   panelItemLabel,
   panelItemLink,
   panelItemName,
   panelItemOnlyAdmin,
+  panelItemScopes,
   panelItemType,
+  panelScopeLabel,
   patchPanelItem,
+  scopeItemCounts,
+  togglePanelItemScope,
   type PanelItemType,
-} from './group-panel'
+} from './command-panel'
 
 function textInput(value: string, placeholder: string, onInput: (value: string) => void) {
   return h('input', {
@@ -38,18 +43,15 @@ function textInput(value: string, placeholder: string, onInput: (value: string) 
   })
 }
 
-function typeSelect(value: string, onChange: (type: PanelItemType) => void) {
+function select(value: string, options: { value: string; label: string }[], onChange: (value: string) => void) {
   return h(
     'select',
     {
       class: 'me-select',
       value,
-      onChange: (event: Event) => {
-        const next = (event.target as HTMLSelectElement).value
-        if ((PANEL_ITEM_TYPES as readonly string[]).includes(next)) onChange(next as PanelItemType)
-      },
+      onChange: (event: Event) => onChange((event.target as HTMLSelectElement).value),
     },
-    PANEL_ITEM_TYPES.map(type => h('option', { value: type }, panelItemLabel(type))),
+    options.map(option => h('option', { value: option.value }, option.label)),
   )
 }
 
@@ -57,8 +59,14 @@ function field(label: string, control: VNodeChild) {
   return h('label', { class: 'me-field' }, [h('span', { class: 'me-field-label' }, label), control])
 }
 
-export const GroupPanelEditor = defineComponent({
-  name: 'GroupPanelEditor',
+/** 指令名输入框只填名字，存储时拼成 `/名字`。 */
+function commandNameInput(item: unknown): string {
+  const name = panelItemName(item).trim()
+  return name.startsWith('/') ? name.slice(1) : name
+}
+
+export const CommandPanelEditor = defineComponent({
+  name: 'CommandPanelEditor',
   props: {
     items: { type: Array as () => unknown[], required: true },
     issues: { type: Array as () => ValidationIssue[], default: () => [] },
@@ -87,30 +95,53 @@ export const GroupPanelEditor = defineComponent({
       }, errors ? `${errors} 错误` : `${warnings} 警告`)
     }
 
+    const renderScopes = (item: unknown, index: number) => {
+      const current = panelItemScopes(item)
+      return h('div', { class: 'me-scope-row' }, PANEL_SCOPES.map(scope => h('label', {
+        class: ['me-scope-chip', current.includes(scope) ? 'me-scope-chip-on' : ''],
+      }, [
+        h('input', {
+          type: 'checkbox',
+          checked: current.includes(scope),
+          onChange: () => update(replaceAt(props.items, index, togglePanelItemScope(item, scope))),
+        }),
+        h('span', {}, panelScopeLabel(scope)),
+      ])))
+    }
+
     const renderBody = (item: unknown, index: number) => {
       const type = panelItemType(item)
       const admin = panelItemOnlyAdmin(item)
       return h('div', { class: 'me-card-body' }, [
-        field('名称', textInput(panelItemName(item), type === 'link' ? '链接名称' : '/指令名', value => patched(index, { name: value }))),
-        field('描述', textInput(panelItemDesc(item), '展示给群成员的说明', value => patched(index, { desc: value }))),
-        field('类型', typeSelect(type, next => update(replaceAt(props.items, index, changePanelItemType(item, next))))),
+        field('指令名', type === 'link'
+          ? textInput(panelItemName(item), '链接名称', value => patched(index, { name: value }))
+          : h('div', { class: 'me-name-input' }, [
+            h('span', { class: 'me-name-prefix' }, '/'),
+            textInput(commandNameInput(item), '指令名（不含 /）', value => patched(index, { name: value ? `/${value}` : '' })),
+          ])),
+        field('指令介绍', textInput(panelItemDesc(item), '展示给用户的说明', value => patched(index, { desc: value }))),
+        field('类型', select(panelItemType(item), PANEL_ITEM_TYPES.map(candidate => ({
+          value: candidate,
+          label: panelItemLabel(candidate),
+        })), next => update(replaceAt(props.items, index, changePanelItemType(item, next as PanelItemType))))),
+        field('权限菜单', select(admin ? 'admin' : 'all', [
+          { value: 'all', label: '所有人' },
+          { value: 'admin', label: '仅管理员' },
+        ], next => patched(index, { only_admin: next === 'admin' }))),
+        field('使用场景', renderScopes(item, index)),
         type === 'link'
           ? field('链接', textInput(panelItemLink(item), 'https://…', value => patched(index, { link: value })))
           : null,
-        field('管理员限定', h('input', {
-          type: 'checkbox',
-          checked: admin,
-          onChange: (event: Event) => patched(index, { only_admin: (event.target as HTMLInputElement).checked }),
-        })),
-      ])
+      ].filter(child => child !== null))
     }
 
     const renderCard = (item: unknown, index: number) => {
       const type = panelItemType(item)
-      const name = panelItemName(item)
+      const name = panelItemDisplayNameForCard(item)
       const admin = panelItemOnlyAdmin(item)
       const valid = PANEL_ITEM_TYPES.includes(type as PanelItemType)
-      const prefix = `groupPanel.items[${index}]`
+      const scopeCount = panelItemScopes(item).length
+      const prefix = `commandPanel.items[${index}]`
       return h(
         'div',
         {
@@ -130,6 +161,7 @@ export const GroupPanelEditor = defineComponent({
             h('span', { class: 'me-drag-handle', title: '拖拽排序' }, '⠿'),
             h('span', { class: ['me-type-badge', valid ? '' : 'me-type-badge-warn'] }, panelItemLabel(type)),
             h('span', { class: 'me-card-name' }, name || '未命名'),
+            h('span', { class: 'me-hint' }, `${scopeCount} 个场景`),
             admin ? h('span', { class: 'me-admin-badge' }, '管理员') : null,
             renderBadge(prefix),
             h('span', { class: 'me-spacer' }),
@@ -139,7 +171,6 @@ export const GroupPanelEditor = defineComponent({
               type: 'button',
               class: 'me-icon-btn',
               title: '复制',
-              disabled: props.items.length >= GROUP_PANEL_MAX_ITEMS,
               onClick: () => update(cloneAt(props.items, index)),
             }, '⧉'),
             h('button', { type: 'button', class: 'me-icon-btn me-icon-danger', title: '删除', onClick: () => update(removeAt(props.items, index)) }, '×'),
@@ -154,21 +185,35 @@ export const GroupPanelEditor = defineComponent({
       )
     }
 
+    const renderCounts = () => {
+      const counts = scopeItemCounts({ items: props.items })
+      return h('div', { class: 'me-count' }, PANEL_SCOPES
+        .map(scope => `${panelScopeLabel(scope)} ${counts[scope]} / ${COMMAND_PANEL_MAX_ITEMS}`)
+        .join(' · '))
+    }
+
     return () => {
-      const full = props.items.length >= GROUP_PANEL_MAX_ITEMS
+      const scopes = defaultScopes(props.items)
       return h('div', { class: 'me-editor-list' }, [
-        h('div', { class: 'me-count' }, `面板条目 ${props.items.length} / ${GROUP_PANEL_MAX_ITEMS}`),
+        renderCounts(),
         ...props.items.map(renderCard),
         h('div', { class: 'me-add-row' }, [
           ...PANEL_ITEM_TYPES.map(type => h('button', {
             type: 'button',
             class: 'me-button',
-            disabled: full,
-            onClick: () => update([...props.items, createPanelItem(type)]),
-          }, `+ ${panelItemLabel(type)}条目`)),
-          full ? h('span', { class: 'me-hint' }, '已达 Group Panel 条目上限 20') : null,
+            disabled: scopes === null,
+            onClick: () => update([...props.items, createPanelItem(type, scopes ?? ['group'])]),
+          }, `+ 添加${panelItemLabel(type)}`)),
+          scopes === null ? h('span', { class: 'me-hint' }, '四个使用场景都已达到 20 条上限') : null,
         ]),
       ])
     }
   },
 })
+
+function panelItemDisplayNameForCard(item: unknown): string {
+  const name = panelItemName(item).trim()
+  if (!name) return ''
+  if (panelItemType(item) === 'command' && !name.startsWith('/')) return `/${name}`
+  return name
+}

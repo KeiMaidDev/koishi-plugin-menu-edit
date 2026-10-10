@@ -21,7 +21,7 @@ describe('client：JSON 互转与未知字段保留', () => {
         items: [{ name: '帮助', type: 'send_message', send_message: '/help', futureItemField: 1 }],
         futureTopField: { nested: true },
       },
-      groupPanel: { remark: 'menu-edit', items: [], futurePanelField: 'x' },
+      commandPanel: { remark: 'menu-edit', items: [], futurePanelField: 'x' },
       unknownTopLevel: 'keep-me',
     }
 
@@ -32,7 +32,7 @@ describe('client：JSON 互转与未知字段保留', () => {
   it('缺少 surface 或 items 时补默认值，不丢已有字段', () => {
     const normalized = normalizeConfiguration({ privateMenu: { future: 1 } })
     assert.deepEqual(normalized.privateMenu, { future: 1, items: [] })
-    assert.deepEqual(normalized.groupPanel.items, [])
+    assert.deepEqual(normalized.commandPanel.items, [])
   })
 })
 

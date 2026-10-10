@@ -24,7 +24,7 @@ afterEach(() => {
 function configuration(overrides: Partial<PanelConfiguration> = {}): PanelConfiguration {
   return {
     privateMenu: { items: [] },
-    groupPanel: { remark: 'menu-edit', items: [] },
+    commandPanel: { remark: 'menu-edit', items: [] },
     ...overrides,
   }
 }
@@ -98,7 +98,7 @@ describe('MenuService：Draft 保存与 revision', () => {
     const { service } = harness()
     const draft = configuration({
       privateMenu: { items: [], futureFlag: true },
-      groupPanel: { remark: 'menu-edit', items: [], futurePanelField: { nested: 1 } },
+      commandPanel: { remark: 'menu-edit', items: [], futurePanelField: { nested: 1 } },
       unknownTopLevel: 'keep-me',
     })
 
@@ -151,7 +151,7 @@ describe('MenuService：Discard Draft', () => {
   it('恢复到导入后的初始 Panel Configuration，并递增 revision', async () => {
     const instance = harness()
     const initial = configuration({
-      groupPanel: { remark: 'imported', items: [{ name: '/help', type: 'command' }] },
+      commandPanel: { remark: 'imported', items: [{ name: '/help', type: 'command', scopes: ['group'] }] },
     })
     const dirty = configuration({ privateMenu: { items: [{ name: '草稿' }] } })
     await instance.store.write('100', makeState('100', {
@@ -171,7 +171,7 @@ describe('MenuService：Discard Draft', () => {
   it('已发布的 surface 恢复 Published Revision，未发布的 surface 回退到初始导入内容', async () => {
     const instance = harness()
     const initial = configuration({
-      groupPanel: { remark: 'imported', items: [{ name: '/imported', type: 'command' }] },
+      commandPanel: { remark: 'imported', items: [{ name: '/imported', type: 'command', scopes: ['group'] }] },
     })
     const publishedPrivateMenu = { items: [{ name: '已发布', type: 'send_message', send_message: '/published' }] }
     await instance.store.write('100', makeState('100', {
@@ -184,7 +184,7 @@ describe('MenuService：Discard Draft', () => {
           version: 12,
           publishedAt: '2026-10-10T01:00:00.000Z',
         },
-        groupPanel: null,
+        commandPanels: {},
       },
     }))
 
@@ -193,7 +193,7 @@ describe('MenuService：Discard Draft', () => {
 
     const snapshot = await instance.service.loadWorkspace('100')
     assert.deepEqual(snapshot.draft.privateMenu, publishedPrivateMenu)
-    assert.deepEqual(snapshot.draft.groupPanel, initial.groupPanel)
+    assert.deepEqual(snapshot.draft.commandPanel, initial.commandPanel)
   })
 
   it('既无 Published Revision 也无导入内容时回到空配置', async () => {
@@ -367,7 +367,7 @@ describe('MenuService：Publish Private Menu', () => {
       draft: configuration({ privateMenu: draftMenu }),
       published: {
         privateMenu: { menu: oldMenu, version: 9, publishedAt: '2026-10-10T00:00:00.000Z' },
-        groupPanel: null,
+        commandPanels: {},
       },
     }))
     instance.platform.setError = new MenuPlatformError('platform-error', '写入失败')

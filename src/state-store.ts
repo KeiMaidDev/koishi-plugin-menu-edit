@@ -4,13 +4,16 @@
  * 每个 Bot Instance 一个文件：`<dataDir>/menu-edit/<encoded-appId>.json`。
  * 写入按 AppID 串行化，先写临时文件再原子替换主文件，并保留上一版为 `.bak`；
  * 主文件损坏时回退读取 `.bak`，两者都不可读则报错而不是静默覆盖。
+ *
+ * schemaVersion 1 的旧文件在读取时迁移到 2；读到未知的更高版本时抛错拒绝静默覆盖。
  */
 import { promises as fs } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { panelItemScopes, withPanelItemScopes } from './command-panel'
 import { isRecord } from './guards'
 import { MENU_STATE_SCHEMA_VERSION, type MenuState } from './types'
 
-export type MenuStateStoreErrorReason = 'state-unreadable' | 'state-write-failed'
+export type MenuStateStoreErrorReason = 'state-unreadable' | 'state-write-failed' | 'state-version-unsupported'
 
 export class MenuStateStoreError extends Error {
   constructor(
@@ -30,36 +33,135 @@ export interface MenuStateStoreOptions {
   renameRetries?: number
 }
 
-function parseState(raw: string): MenuState | null {
-  const parsed: unknown = JSON.parse(raw)
-  if (!isRecord(parsed)) return null
-  if (parsed.schemaVersion !== MENU_STATE_SCHEMA_VERSION) return null
-  if (typeof parsed.appId !== 'string') return null
-  if (typeof parsed.revision !== 'number' || !Number.isInteger(parsed.revision) || parsed.revision < 0) return null
-  if (typeof parsed.updatedAt !== 'string') return null
-  if (!isRecord(parsed.draft)) return null
-  if (parsed.importedConfiguration !== null && !isRecord(parsed.importedConfiguration)) return null
-  if (!isRecord(parsed.published)) return null
-  return parsed as unknown as MenuState
+type ParseResult =
+  | { kind: 'ok'; state: MenuState }
+  | { kind: 'unsupported'; version: number }
+  | { kind: 'invalid'; error?: unknown }
+
+function isStateShape(parsed: Record<string, unknown>): boolean {
+  if (typeof parsed.appId !== 'string') return false
+  if (typeof parsed.revision !== 'number' || !Number.isInteger(parsed.revision) || parsed.revision < 0) return false
+  if (typeof parsed.updatedAt !== 'string') return false
+  if (!isRecord(parsed.draft)) return false
+  if (!isRecord(parsed.draft.privateMenu) || !isRecord(parsed.draft.commandPanel)) return false
+  if (parsed.importedConfiguration !== null && !isRecord(parsed.importedConfiguration)) return false
+  if (!isRecord(parsed.published)) return false
+  if (parsed.published.privateMenu !== null && !isRecord(parsed.published.privateMenu)) return false
+  if (!isRecord(parsed.published.commandPanels)) return false
+  return true
+}
+
+/** v1 的 groupPanel 条目统一补 `scopes: ['group']`，让模型升级到 v2。 */
+function migrateCommandPanelV1(value: unknown): Record<string, unknown> {
+  const panel: Record<string, unknown> = isRecord(value) ? { ...value } : { remark: 'menu-edit', items: [] }
+  const items = Array.isArray(panel.items) ? panel.items : []
+  panel.items = items.map((item) => {
+    const scopes = panelItemScopes(item)
+    return withPanelItemScopes(item, scopes.length ? scopes : ['group'])
+  })
+  return panel
+}
+
+/** v1 的 published 面板是平台侧内容，条目不带本地 scopes，这里只补 items 数组。 */
+function publishedPanelV1(value: unknown): Record<string, unknown> {
+  const panel = isRecord(value) ? { ...value } : { remark: 'menu-edit', items: [] }
+  panel.items = Array.isArray(panel.items) ? panel.items : []
+  return panel
+}
+function migratePublishedV1(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) return {}
+  const panelId = typeof value.panelId === 'string' ? value.panelId : ''
+  if (!panelId) return {}
+  return {
+    group: {
+      scope: 'group',
+      panelId,
+      panel: publishedPanelV1(value.panel),
+      version: typeof value.version === 'number' ? value.version : null,
+      publishedAt: typeof value.publishedAt === 'string' ? value.publishedAt : '',
+      cleanup: isRecord(value.cleanup)
+        ? {
+            panelIds: Array.isArray(value.cleanup.panelIds) ? value.cleanup.panelIds : [],
+            updatedAt: typeof value.cleanup.updatedAt === 'string' ? value.cleanup.updatedAt : null,
+          }
+        : { panelIds: [], updatedAt: null },
+    },
+  }
+}
+
+function migrateImportedV1(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) return null
+  const { groupPanel, ...rest } = value
+  return {
+    ...rest,
+    commandPanel: migrateCommandPanelV1(groupPanel),
+  }
+}
+
+/** 把 schemaVersion 1 的状态迁移到 2：groupPanel → commandPanel / commandPanels.group。 */
+function migrateV1(parsed: Record<string, unknown>): Record<string, unknown> | null {
+  const draft = isRecord(parsed.draft) ? parsed.draft : {}
+  const published = isRecord(parsed.published) ? parsed.published : {}
+  const { groupPanel: draftGroupPanel, ...draftRest } = draft
+  const { groupPanel: publishedGroupPanel, ...publishedRest } = published
+  return {
+    schemaVersion: MENU_STATE_SCHEMA_VERSION,
+    appId: parsed.appId,
+    revision: parsed.revision,
+    updatedAt: parsed.updatedAt,
+    importedConfiguration: migrateImportedV1(parsed.importedConfiguration),
+    draft: {
+      ...draftRest,
+      privateMenu: isRecord(draft.privateMenu) ? draft.privateMenu : { items: [] },
+      commandPanel: migrateCommandPanelV1(draftGroupPanel),
+    },
+    published: {
+      ...publishedRest,
+      privateMenu: isRecord(published.privateMenu) ? published.privateMenu : null,
+      commandPanels: migratePublishedV1(publishedGroupPanel),
+    },
+  }
+}
+
+function parseState(raw: string): ParseResult {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (error) {
+    return { kind: 'invalid', error }
+  }
+  if (!isRecord(parsed)) return { kind: 'invalid' }
+  if (typeof parsed.schemaVersion !== 'number') return { kind: 'invalid' }
+  if (parsed.schemaVersion > MENU_STATE_SCHEMA_VERSION) {
+    return { kind: 'unsupported', version: parsed.schemaVersion }
+  }
+  const migrated = parsed.schemaVersion === MENU_STATE_SCHEMA_VERSION ? parsed : migrateV1(parsed)
+  if (!migrated || !isStateShape(migrated)) return { kind: 'invalid' }
+  return { kind: 'ok', state: migrated as unknown as MenuState }
 }
 
 function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
 }
 
-async function readState(path: string): Promise<{ state: MenuState | null; missing: boolean; error?: unknown }> {
+interface ReadStateResult {
+  state: MenuState | null
+  missing: boolean
+  unsupportedVersion?: number
+  error?: unknown
+}
+
+async function readState(path: string): Promise<ReadStateResult> {
   let raw: string
   try {
     raw = await fs.readFile(path, 'utf8')
   } catch (error) {
     return { state: null, missing: isMissing(error), error }
   }
-  try {
-    const state = parseState(raw)
-    return state ? { state, missing: false } : { state: null, missing: false, error: new Error('状态文件结构非法') }
-  } catch (error) {
-    return { state: null, missing: false, error }
-  }
+  const result = parseState(raw)
+  if (result.kind === 'ok') return { state: result.state, missing: false }
+  if (result.kind === 'unsupported') return { state: null, missing: false, unsupportedVersion: result.version }
+  return { state: null, missing: false, error: result.error ?? new Error('状态文件结构非法') }
 }
 
 export class MenuStateStore {
@@ -106,10 +208,22 @@ export class MenuStateStore {
   async read(appId: string): Promise<MenuState | null> {
     const primary = await readState(this.pathFor(appId))
     if (primary.state) return primary.state
+    if (primary.unsupportedVersion !== undefined) {
+      throw new MenuStateStoreError(
+        'state-version-unsupported',
+        `AppID ${appId} 的菜单状态文件版本 ${primary.unsupportedVersion} 高于当前支持版本 ${MENU_STATE_SCHEMA_VERSION}，拒绝静默覆盖。`,
+      )
+    }
     if (primary.missing) return null
 
     const backup = await readState(this.backupPathFor(appId))
     if (backup.state) return backup.state
+    if (backup.unsupportedVersion !== undefined) {
+      throw new MenuStateStoreError(
+        'state-version-unsupported',
+        `AppID ${appId} 的菜单状态备份版本 ${backup.unsupportedVersion} 高于当前支持版本 ${MENU_STATE_SCHEMA_VERSION}，拒绝静默覆盖。`,
+      )
+    }
 
     throw new MenuStateStoreError(
       'state-unreadable',

@@ -1,13 +1,13 @@
 import { message, messageBox } from '@koishijs/client'
 import { defineComponent, h, onBeforeUnmount, onMounted, reactive, resolveComponent } from 'vue'
-import { emptyPanelConfiguration, type BotInstanceSummary, type DraftRevisionConflict, type GroupPanelCandidate, type GroupPanelPublishResult, type PanelConfiguration, type PrivateMenuPublishResult, type ValidationIssue, type WorkspaceSnapshot } from '../src/types'
+import { emptyPanelConfiguration, PANEL_SCOPES, PANEL_SCOPE_LABELS, type BotInstanceSummary, type CommandPanelCandidate, type CommandPanelPublishResult, type CommandPanelScopeCandidates, type DraftRevisionConflict, type PanelConfiguration, type PanelScope, type PrivateMenuPublishResult, type ValidationIssue, type WorkspaceSnapshot } from '../src/types'
 import { validatePanelConfiguration } from '../src/validation'
 import * as api from './api'
 import { PrivateMenuEditor } from './private-editor'
 import { normalizeConfiguration } from './private-menu'
 import { PrivateMenuPreview } from './phone-preview'
-import { GroupPanelEditor } from './group-editor'
-import { GroupPanelPreview } from './group-preview'
+import { CommandPanelEditor } from './command-editor'
+import { CommandPanelPreview } from './command-preview'
 
 /** 控制台页名：侧栏入口与 ctx.page 的 name 共用同一字面量。 */
 export const PANEL_NAME = '机器人菜单'
@@ -15,7 +15,7 @@ export const PANEL_NAME = '机器人菜单'
 const AUTO_SAVE_DELAY = 900
 
 type SaveStatus = 'saved' | 'saving' | 'failed' | 'unsaved'
-type TabKey = 'private' | 'group'
+type TabKey = 'private' | 'command'
 type ViewMode = 'visual' | 'json'
 
 const STATUS_TEXT: Record<SaveStatus, string> = {
@@ -38,8 +38,8 @@ interface PanelState {
   error: string
   conflict: DraftRevisionConflict | null
   importError: string
-  groupCandidates: GroupPanelCandidate[]
-  groupSelection: string
+  importCandidates: CommandPanelScopeCandidates[]
+  importSelections: Partial<Record<PanelScope, string>>
   publishMessage: string
   publishIssues: ValidationIssue[]
   tab: TabKey
@@ -62,12 +62,15 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/** 清理确认框里逐项展示待删除 Group Panel 的 ID、备注、更新时间与条目摘要。 */
-function formatCleanupCandidates(candidates: GroupPanelCandidate[]): string {
-  return candidates.map(candidate => {
-    const remark = candidate.remark ? `（${candidate.remark}）` : ''
-    const updatedAt = candidate.updatedAt ?? '未知更新时间'
-    return `· ${candidate.panelId}${remark} · ${updatedAt} · ${candidate.itemCount} 项：${candidate.itemSummary}`
+/** 清理确认框里按场景逐项展示待删除面板的 ID、备注、更新时间与条目摘要。 */
+function formatCleanupCandidates(groups: CommandPanelScopeCandidates[]): string {
+  return groups.map(group => {
+    const lines = group.candidates.map(candidate => {
+      const remark = candidate.remark ? `（${candidate.remark}）` : ''
+      const updatedAt = candidate.updatedAt ?? '未知更新时间'
+      return `  · ${candidate.panelId}${remark} · ${updatedAt} · ${candidate.itemCount} 项：${candidate.itemSummary}`
+    })
+    return `${PANEL_SCOPE_LABELS[group.scope]}\n${lines.join('\n')}`
   }).join('\n')
 }
 
@@ -165,18 +168,32 @@ const PANEL_STYLE = `
 .me-admin-badge { padding: 1px 6px; border-radius: 8px; font-size: 11px; background: #fff3e0; color: #b26a00; }
 .me-type-badge-warn { background: #fdecea; color: #c62828; }
 .me-candidate { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; font-size: 13px; }
-.me-group-screen { background: #ededed; }
-.me-group-body { flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
-.me-group-bubble { align-self: flex-end; padding: 8px 12px; border-radius: 10px; background: #95ec69; color: #1a1a1a; font-size: 13px; }
-.me-group-list { display: flex; flex-direction: column; gap: 8px; }
-.me-group-row { display: flex; gap: 10px; padding: 10px 12px; border-radius: 10px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
-.me-group-index { flex: none; width: 20px; height: 20px; border-radius: 50%; background: #eef3ff; color: #3b6fd4; font-size: 12px; display: flex; align-items: center; justify-content: center; }
-.me-group-main { min-width: 0; }
-.me-group-title { display: flex; align-items: center; gap: 6px; }
-.me-group-name { font-size: 13px; color: #222; }
-.me-group-desc { margin-top: 3px; font-size: 12px; color: #888; word-break: break-all; }
-.me-group-empty { padding: 20px 10px; text-align: center; font-size: 12px; color: #999; }
-@media (max-width: 900px) { .me-layout { grid-template-columns: minmax(0, 1fr); } }
+.me-candidate-group { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
+.me-candidate-title { font-size: 12px; font-weight: 600; color: #8a6d00; }
+.me-scope-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.me-scope-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 14px; border: 1px solid var(--k-border-color, #dcdfe6); font-size: 12px; cursor: pointer; }
+.me-scope-chip-on { border-color: var(--k-color-primary, #409eff); color: var(--k-color-primary, #409eff); background: #ecf5ff; }
+.me-name-input { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+.me-name-prefix { color: var(--k-text-light, #909399); font-size: 13px; }
+.me-command-screen { height: 520px; background: #f0f0f0; }
+.me-scope-tabs { display: flex; gap: 4px; padding: 8px; border-bottom: 1px solid #e5e5e5; background: #fff; }
+.me-scope-tab { flex: 1; padding: 5px 4px; border: none; border-radius: 6px; background: #f4f4f4; color: #666; font-size: 12px; cursor: pointer; }
+.me-scope-tab-active { background: #1a8cff; color: #fff; }
+.me-command-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; padding: 12px; overflow: hidden; }
+.me-command-panel { max-height: 55%; overflow-y: auto; background: #fff; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+.me-command-list { display: flex; flex-direction: column; overflow: hidden; }
+.me-command-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid #f0f0f0; }
+.me-command-row:last-child { border-bottom: none; }
+.me-command-index { flex: none; width: 20px; height: 20px; border-radius: 50%; background: #eef3ff; color: #3b6fd4; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+.me-command-main { min-width: 0; flex: 1; }
+.me-command-title { display: flex; align-items: center; gap: 6px; }
+.me-command-name { font-size: 13px; color: #111; }
+.me-command-desc { margin-top: 3px; font-size: 12px; color: #b8b8b8; word-break: break-all; }
+.me-command-chevron { flex: none; color: #c4c4c4; font-size: 18px; }
+.me-command-empty { padding: 20px 10px; text-align: center; font-size: 12px; color: #999; }
+.me-command-input-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px 10px; border-top: 1px solid #e5e5e5; background: #f7f7f7; }
+.me-command-input { flex: 1; padding: 8px 12px; border-radius: 16px; background: #fff; color: #bbb; font-size: 13px; }
+.me-command-send { padding: 8px 14px; border-radius: 16px; background: #1a8cff; color: #fff; font-size: 13px; }@media (max-width: 900px) { .me-layout { grid-template-columns: minmax(0, 1fr); } }
 `
 
 function injectStyle() {
@@ -203,8 +220,8 @@ export default defineComponent({
       error: '',
       conflict: null,
       importError: '',
-      groupCandidates: [],
-      groupSelection: '',
+      importCandidates: [],
+      importSelections: {},
       publishMessage: '',
       publishIssues: [],
       tab: 'private',
@@ -262,8 +279,8 @@ export default defineComponent({
         state.error = ''
         state.conflict = null
         state.importError = ''
-        state.groupCandidates = []
-        state.groupSelection = ''
+        state.importCandidates = []
+        state.importSelections = {}
         state.publishMessage = ''
         state.publishIssues = []
       } catch (error) {
@@ -448,13 +465,13 @@ export default defineComponent({
       }
     }
 
-    const importGroupPanel = async (panelId?: string) => {
+    const importCommandPanel = async (selections?: Partial<Record<PanelScope, string>>) => {
       if (!state.activeAppId || state.importing) return
-      if (panelId === undefined && isDirty()) {
+      if (selections === undefined && isDirty()) {
         try {
           await messageBox.confirm(
-            '导入会用平台当前 Group Panel 覆盖 Draft，并记为导入内容。是否继续？',
-            '导入 Group Panel',
+            '导入会用平台当前指令面板覆盖 Draft，并记为导入内容。是否继续？',
+            '导入指令面板',
             { type: 'warning', confirmButtonText: '导入', cancelButtonText: '取消' },
           )
         } catch {
@@ -464,20 +481,39 @@ export default defineComponent({
       cancelAutoSave()
       state.importing = true
       state.importError = ''
-      if (panelId === undefined) {
-        state.groupCandidates = []
-        state.groupSelection = ''
+      if (selections === undefined) {
+        state.importCandidates = []
+        state.importSelections = {}
       }
       try {
-        const result = await api.importGroupPanel({ appId: state.activeAppId, panelId })
+        const result = await api.importCommandPanel({ appId: state.activeAppId, selections })
         if (result.ok) {
-          message.success(result.created ? '已创建并接管 Managed Panel' : '已导入 Group Panel')
+          const scopes = Object.keys(result.managedPanelIds) as PanelScope[]
+          message.success(scopes.length ? '已导入指令面板' : '平台没有可接管的 all 面板，已留空')
           await loadWorkspace(state.activeAppId)
-          state.publishMessage = `Managed Panel ${result.managedPanelId} 已就绪。`
+          state.publishMessage = scopes.length
+            ? `已接管 ${scopes.length} 个场景的受管面板。`
+            : '当前没有可接管的指令面板；发布时会按场景创建受管面板。'
+          state.publishIssues = [
+            ...result.conflicts.map(conflict => ({
+              severity: 'warning' as const,
+              code: 'command-panel.import-conflict',
+              path: 'commandPanel.items',
+              message: `「${conflict.name}」在 ${conflict.scopes.map(scope => PANEL_SCOPE_LABELS[scope]).join('、')} 有 ${conflict.variants} 种不同字段，已保留为多条。`,
+            })),
+            ...PANEL_SCOPES.flatMap(scope => (result.specificPanels[scope] ?? []).map(panel => ({
+              severity: 'warning' as const,
+              code: 'command-panel.import-specific',
+              path: `commandPanel.scopes.${scope}`,
+              message: `${PANEL_SCOPE_LABELS[scope]} 场景存在 specific 面板 ${panel.panelId}，本页不会接管或删除它。`,
+            }))),
+          ]
         } else if (result.code === 'selection-required') {
-          state.groupCandidates = result.candidates
-          state.groupSelection = result.candidates[0]?.panelId ?? ''
-          state.publishMessage = '发现多个 Group Panel，请选择唯一的接管对象。'
+          state.importCandidates = result.candidates
+          const next: Partial<Record<PanelScope, string>> = {}
+          for (const group of result.candidates) next[group.scope] = group.candidates[0]?.panelId ?? ''
+          state.importSelections = next
+          state.publishMessage = '多个场景存在多个指令面板候选，请为每个场景选择接管对象。'
         } else {
           state.importError = `导入失败：${result.message}`
         }
@@ -488,7 +524,10 @@ export default defineComponent({
       }
     }
 
-    const publishGroupPanel = async (cleanupPanelIds?: string[], warningsConfirmed = false): Promise<void> => {
+    const publishCommandPanel = async (
+      cleanupPanelIds?: Partial<Record<PanelScope, string[]>>,
+      warningsConfirmed = false,
+    ): Promise<void> => {
       if (!state.activeAppId || state.publishing) return
       if (state.jsonError) {
         state.error = `JSON 解析失败：${state.jsonError}`
@@ -499,14 +538,14 @@ export default defineComponent({
       }
       if (isDirty() || state.status === 'failed') return
 
-      const groupValidation = validatePanelConfiguration(state.configuration)
-      const groupErrors = groupValidation.errors.filter(issue => issue.path.startsWith('groupPanel'))
-      if (groupErrors.length) {
-        state.publishIssues = groupErrors
-        state.publishMessage = `发布被阻止：Group Panel 有 ${groupErrors.length} 个硬错误。`
+      const commandValidation = validatePanelConfiguration(state.configuration)
+      const commandErrors = commandValidation.errors.filter(issue => issue.path.startsWith('commandPanel'))
+      if (commandErrors.length) {
+        state.publishIssues = commandErrors
+        state.publishMessage = `发布被阻止：指令面板有 ${commandErrors.length} 个硬错误。`
         return
       }
-      const warnings = groupValidation.warnings.filter(issue => issue.path.startsWith('groupPanel'))
+      const warnings = commandValidation.warnings.filter(issue => issue.path.startsWith('commandPanel'))
       if (warnings.length && !warningsConfirmed) {
         try {
           await messageBox.confirm(
@@ -523,26 +562,45 @@ export default defineComponent({
       state.publishMessage = ''
       state.publishIssues = []
       try {
-        const result: GroupPanelPublishResult = await api.publishGroupPanel({
+        const result: CommandPanelPublishResult = await api.publishCommandPanel({
           appId: state.activeAppId,
           expectedRevision: state.revision,
           cleanupPanelIds,
         })
         if (result.ok) {
-          const pending = result.published.cleanup.panelIds.length
-          message.success(result.status === 'partial' ? 'Group Panel 部分发布' : 'Group Panel 已发布')
+          const panels = Object.values(result.published).filter(panel => panel !== undefined)
+          const pending = panels.reduce((sum, panel) => sum + panel.cleanup.panelIds.length, 0)
+          const failedScopes = result.scopeResults.filter(scope => scope.status === 'failed')
+          const successfulScopes = result.scopeResults.filter(scope => scope.status !== 'failed')
+          if (result.status === 'partial') message.warning('指令面板部分发布')
+          else message.success('指令面板已发布')
           await loadWorkspace(state.activeAppId)
-          state.publishMessage = result.status === 'partial'
-            ? `Managed Panel ${result.published.panelId} 已写入，仍有 ${pending} 个其他面板待清理。`
-            : `Group Panel 已发布为唯一的 group/all Panel（${result.published.panelId}）。`
-          state.publishIssues = result.warnings
+          if (result.status === 'partial') {
+            const details = [
+              successfulScopes.length ? `已写入 ${successfulScopes.length} 个场景` : '',
+              failedScopes.length ? `失败场景：${failedScopes.map(item => PANEL_SCOPE_LABELS[item.scope]).join('、')}` : '',
+              pending ? `仍有 ${pending} 个面板待清理` : '',
+            ].filter(Boolean)
+            state.publishMessage = `${details.join('；')}。`
+          } else {
+            state.publishMessage = `指令面板已发布到 ${panels.length} 个使用场景。`
+          }
+          state.publishIssues = [
+            ...result.warnings,
+            ...failedScopes.map(scope => ({
+              severity: 'error' as const,
+              code: `command-panel.publish-${scope.code ?? 'failed'}`,
+              path: `commandPanel.scopes.${scope.scope}`,
+              message: `${PANEL_SCOPE_LABELS[scope.scope]} 场景发布失败：${scope.message ?? '未知错误'}`,
+            })),
+          ]
         } else if (result.code === 'cleanup-confirmation-required') {
           state.publishing = false
           let confirmed = false
           try {
             await messageBox.confirm(
-              `发布前需要删除以下其他 group Panel：\n\n${formatCleanupCandidates(result.candidates)}\n\n删除后无法从本页面恢复，是否继续？`,
-              '确认清理其他 Group Panel',
+              `发布前需要删除以下其他 all 指令面板：\n\n${formatCleanupCandidates(result.candidates)}\n\n删除后无法从本页面恢复，是否继续？`,
+              '确认清理其他指令面板',
               { type: 'warning', confirmButtonText: '确认删除并发布', cancelButtonText: '取消' },
             )
             confirmed = true
@@ -550,7 +608,9 @@ export default defineComponent({
             confirmed = false
           }
           if (confirmed) {
-            return publishGroupPanel(result.candidates.map(candidate => candidate.panelId), true)
+            const ids: Partial<Record<PanelScope, string[]>> = {}
+            for (const group of result.candidates) ids[group.scope] = group.candidates.map(candidate => candidate.panelId)
+            return publishCommandPanel(ids, true)
           }
           state.publishMessage = '已取消清理，Draft 未发布。'
         } else if (result.code === 'revision-conflict') {
@@ -570,6 +630,7 @@ export default defineComponent({
         state.publishing = false
       }
     }
+
     const localValidation = () => validatePanelConfiguration(state.configuration)
 
     const publishPrivateMenu = async () => {
@@ -675,8 +736,8 @@ export default defineComponent({
         type: 'button',
         class: 'me-button',
         disabled: state.loading || state.importing || !state.activeAppId,
-        onClick: () => void (state.tab === 'group' ? importGroupPanel() : importPrivateMenu()),
-      }, state.importing ? '导入中…' : (state.tab === 'group' ? '导入 Group Panel' : '导入 Private Menu')),
+        onClick: () => void (state.tab === 'command' ? importCommandPanel() : importPrivateMenu()),
+      }, state.importing ? '导入中…' : (state.tab === 'command' ? '导入指令面板' : '导入 Private Menu')),
       h('button', { type: 'button', class: 'me-button', disabled: state.loading, onClick: () => void reload() }, '重新加载'),
       h('button', { type: 'button', class: 'me-button me-danger', disabled: state.loading, onClick: () => void discard() }, 'Discard Draft'),
       h('button', { type: 'button', class: 'me-button', disabled: state.loading || state.status !== 'unsaved', onClick: () => void save() }, '保存'),
@@ -684,7 +745,7 @@ export default defineComponent({
         type: 'button',
         class: 'me-button me-primary',
         disabled: state.loading || state.publishing || !state.activeAppId,
-        onClick: () => void (state.tab === 'group' ? publishGroupPanel() : publishPrivateMenu()),
+        onClick: () => void (state.tab === 'command' ? publishCommandPanel() : publishPrivateMenu()),
       }, state.publishing ? '发布中…' : 'Publish'),
     ])
 
@@ -698,7 +759,7 @@ export default defineComponent({
 
     const renderIssueSummary = () => {
       const validation = localValidation()
-      const prefix = state.tab === 'group' ? 'groupPanel' : 'privateMenu'
+      const prefix = state.tab === 'command' ? 'commandPanel' : 'privateMenu'
       const surfaceIssues = [...validation.errors, ...validation.warnings].filter(issue => issue.path.startsWith(prefix))
       const orphan = surfaceIssues.filter(issue => !issue.path.startsWith(`${prefix}.items[`))
       const seen = new Set(orphan.map(issue => `${issue.code}|${issue.path}`))
@@ -710,23 +771,26 @@ export default defineComponent({
         list.map(issue => h('div', {}, `${issue.severity === 'error' ? '错误' : '警告'} · ${issue.message}`)))
     }
 
-    const renderGroupCandidates = () => state.groupCandidates.length
+    const renderImportCandidates = () => state.importCandidates.length
       ? h('div', { class: 'me-alert me-alert-warn' }, [
-        h('div', {}, '发现多个 Group Panel，请选择唯一的接管对象：'),
-        ...state.groupCandidates.map(candidate => h('label', { class: 'me-candidate' }, [
-          h('input', {
-            type: 'radio',
-            name: 'group-panel-candidate',
-            checked: state.groupSelection === candidate.panelId,
-            onChange: () => { state.groupSelection = candidate.panelId },
-          }),
-          h('span', {}, `${candidate.panelId}${candidate.remark ? `（${candidate.remark}）` : ''} · ${candidate.updatedAt ?? '未知更新时间'} · ${candidate.itemCount} 项：${candidate.itemSummary}`),
+        h('div', {}, '多个场景存在多个指令面板候选，请为每个场景选择接管对象：'),
+        ...state.importCandidates.map(group => h('div', { class: 'me-candidate-group' }, [
+          h('div', { class: 'me-candidate-title' }, PANEL_SCOPE_LABELS[group.scope]),
+          ...group.candidates.map(candidate => h('label', { class: 'me-candidate' }, [
+            h('input', {
+              type: 'radio',
+              name: `command-panel-candidate-${group.scope}`,
+              checked: state.importSelections[group.scope] === candidate.panelId,
+              onChange: () => { state.importSelections = { ...state.importSelections, [group.scope]: candidate.panelId } },
+            }),
+            h('span', {}, `${candidate.panelId}${candidate.remark ? `（${candidate.remark}）` : ''} · ${candidate.updatedAt ?? '未知更新时间'} · ${candidate.itemCount} 项：${candidate.itemSummary}`),
+          ])),
         ])),
         h('button', {
           type: 'button',
           class: 'me-button me-primary',
-          disabled: !state.groupSelection || state.importing,
-          onClick: () => void importGroupPanel(state.groupSelection),
+          disabled: state.importing || state.importCandidates.some(group => !state.importSelections[group.scope]),
+          onClick: () => void importCommandPanel(state.importSelections),
         }, state.importing ? '导入中…' : '接管所选面板'),
       ])
       : null
@@ -737,7 +801,7 @@ export default defineComponent({
     const renderSwitchTabs = () => h('div', { class: 'me-toolbar' }, [
       h('div', { class: 'me-tabs' }, [
         h('button', { type: 'button', class: ['me-tab', state.tab === 'private' ? 'me-tab-active' : ''], onClick: () => { state.tab = 'private' } }, '私聊菜单'),
-        h('button', { type: 'button', class: ['me-tab', state.tab === 'group' ? 'me-tab-active' : ''], onClick: () => { state.tab = 'group' } }, '群聊面板'),
+        h('button', { type: 'button', class: ['me-tab', state.tab === 'command' ? 'me-tab-active' : ''], onClick: () => { state.tab = 'command' } }, '指令面板'),
       ]),
       h('span', { class: 'me-spacer' }),
       h('div', { class: 'me-mode' }, [
@@ -747,7 +811,7 @@ export default defineComponent({
     ])
 
     const renderJsonEditor = () => h('div', { class: 'me-column' }, [
-      h('div', { class: 'me-hint' }, 'JSON Panel Configuration（privateMenu / groupPanel；未知字段会原样保留）'),
+      h('div', { class: 'me-hint' }, 'JSON Panel Configuration（privateMenu / commandPanel；未知字段会原样保留）'),
       state.jsonError ? h('div', { class: 'me-alert me-alert-error' }, `JSON 解析失败：${state.jsonError}`) : null,
       h('textarea', {
         class: 'me-editor',
@@ -761,24 +825,24 @@ export default defineComponent({
     ])
 
     const renderVisual = () => {
-      if (state.tab === 'group') {
+      if (state.tab === 'command') {
         const validation = localValidation()
         const issues = [...validation.errors, ...validation.warnings]
         return h('div', { class: 'me-layout' }, [
           h('div', { class: 'me-column' }, [
-            h(GroupPanelEditor, {
-              items: state.configuration.groupPanel.items,
+            h(CommandPanelEditor, {
+              items: state.configuration.commandPanel.items,
               issues,
               'onUpdate:items': (items: unknown[]) => updateConfiguration({
                 ...state.configuration,
-                groupPanel: { ...state.configuration.groupPanel, items },
+                commandPanel: { ...state.configuration.commandPanel, items },
               }),
             }),
           ]),
           h('div', { class: 'me-column' }, [
             h('div', { class: 'me-hint' }, '手机预览'),
-            h(GroupPanelPreview, { items: state.configuration.groupPanel.items }),
-            h('div', { class: 'me-hint' }, '预览按编辑区顺序展示名称、描述与管理员标记，不触发真实指令。'),
+            h(CommandPanelPreview, { items: state.configuration.commandPanel.items }),
+            h('div', { class: 'me-hint' }, '预览可在四个使用场景间切换，只读，不触发真实指令。'),
           ]),
         ])
       }
@@ -811,7 +875,7 @@ export default defineComponent({
         renderIssueSummary(),
         state.error ? h('div', { class: 'me-alert me-alert-error' }, state.error) : null,
         state.importError ? h('div', { class: 'me-alert me-alert-error' }, state.importError) : null,
-        renderGroupCandidates(),
+        renderImportCandidates(),
         state.publishMessage ? h('div', { class: ['me-alert', state.publishMessage.includes('成功') ? 'me-alert-success' : 'me-alert-warn'] }, state.publishMessage) : null,
         renderBots(),
         state.bots.length ? renderSwitchTabs() : null,

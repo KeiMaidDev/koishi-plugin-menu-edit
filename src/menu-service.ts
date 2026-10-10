@@ -1,41 +1,53 @@
 /**
  * MenuService：Menu Edit Panel 唯一公开的自动化测试 seam。
  *
- * 服务端所有状态读取、Draft 保存、导入与 Private Menu 发布都经过这里；Console RPC
- * 只做鉴权和参数转换。状态按 Bot Instance（QQ AppID）隔离，写入走
+ * 服务端所有状态读取、Draft 保存、导入与 Private Menu / Command Panel 发布都经过这里；
+ * Console RPC 只做鉴权和参数转换。状态按 Bot Instance（QQ AppID）隔离，写入走
  * `MenuStateStore.runExclusive`，revision 校验和写文件必须处在同一个互斥段内。
  */
 import type { BotRegistry } from './bot-registry'
+import { deriveScopePanel, mergePanelItems } from './command-panel'
 import { normalizePanelConfiguration } from './configuration'
 import { isRecord } from './guards'
-import { MenuPlatformError, type MenuPlatform, type PlatformGroupPanel, type PlatformPrivateMenu } from './platform'
+import {
+  MenuPlatformError,
+  type MenuPlatform,
+  type PlatformCommandPanel,
+  type PlatformPrivateMenu,
+} from './platform'
 import { defaultSleep, PanelWriteThrottle } from './panel-throttle'
 import type { MenuStateStore } from './state-store'
 import { advanceDraft, createInitialState, recordedConfiguration } from './state'
 import {
   deepClone,
+  emptyCommandPanel,
   emptyPanelConfiguration,
+  PANEL_SCOPES,
   type BotInstanceSummary,
+  type CommandPanelCandidate,
+  type CommandPanelConfiguration,
+  type CommandPanelPublishInput,
+  type CommandPanelPublishResult,
+  type CommandPanelScopeCandidates,
+  type CommandPanelScopePublishResult,
   type DiscardDraftInput,
   type DraftMutationResult,
-  type GroupPanelCandidate,
-  type GroupPanelPublishInput,
-  type GroupPanelPublishResult,
-  type ImportGroupPanelFailure,
-  type ImportGroupPanelInput,
-  type ImportGroupPanelResult,
+  type ImportCommandPanelFailure,
+  type ImportCommandPanelInput,
+  type ImportCommandPanelResult,
   type ImportPrivateMenuInput,
   type ImportPrivateMenuResult,
   type MenuState,
   type PanelConfiguration,
+  type PanelScope,
   type PrivateMenuPublishInput,
   type PrivateMenuPublishResult,
-  type PublishedGroupPanel,
+  type PublishedCommandPanels,
   type PublishedRevisions,
   type SaveDraftInput,
   type WorkspaceSnapshot,
 } from './types'
-import { validateGroupPanel, validatePrivateMenu } from './validation'
+import { validateCommandPanel, validatePrivateMenu } from './validation'
 
 export type MenuServiceErrorCode = 'unknown-bot'
 
@@ -56,8 +68,17 @@ export interface MenuServiceOptions {
   platform?: MenuPlatform
   /** 注入时钟，便于测试断言 revision 与时间戳。 */
   now?: () => Date
-  /** 注入 sleep，便于测试用假时钟快速断言 Group Panel 6500ms 节流。 */
+  /** 注入 sleep，便于测试用假时钟快速断言指令面板 6500ms 节流。 */
   sleep?: (ms: number) => Promise<void>
+}
+
+/** 单次 Publish 里某个使用场景的写入计划。 */
+interface ScopePlan {
+  scope: PanelScope
+  managed: PlatformCommandPanel | undefined
+  derived: CommandPanelConfiguration
+  /** 该场景需要删除的 all 面板（非受管面板，或空场景的全部面板）。 */
+  deleteTargets: PlatformCommandPanel[]
 }
 
 export class MenuService {
@@ -66,8 +87,8 @@ export class MenuService {
   private readonly platform: MenuPlatform | null
   private readonly now: () => Date
   private readonly throttle: PanelWriteThrottle
-  /** 每个 AppID 最近一次列给用户确认的待删除 panel ID；防止单次请求跳过「先列出再确认」。 */
-  private readonly cleanupListings = new Map<string, string[]>()
+  /** 每个 AppID 最近一次列给用户确认的待删除指令面板；防止单次请求跳过「先列出再确认」。 */
+  private readonly cleanupListings = new Map<string, Partial<Record<PanelScope, string[]>>>()
 
   constructor(options: MenuServiceOptions) {
     this.registry = options.registry
@@ -114,14 +135,11 @@ export class MenuService {
   /** Discard Draft：用已记录内容覆盖 Draft，同样带 revision 校验。 */
   async discardDraft(input: DiscardDraftInput): Promise<DraftMutationResult> {
     this.requireBot(input.appId)
-    return this.mutateDraft(input.appId, input.expectedRevision, recordedConfiguration)
+    return this.mutateDraft(input.appId, input.expectedRevision, state => recordedConfiguration(state))
   }
 
   /**
-   * 导入当前 Private Menu。
-   *
-   * 先读平台；读取失败直接返回错误且不写任何状态，避免用空配置静默覆盖 Draft。
-   * 读取成功后写入 Draft、importedConfiguration 与 Published Revision 基线，并递增 revision。
+   * 导入当前 Private Menu：读取平台内容后同时写入 Draft 与 Published Revision。
    */
   async importPrivateMenu(input: ImportPrivateMenuInput): Promise<ImportPrivateMenuResult> {
     const bot = this.findBot(input.appId)
@@ -246,130 +264,142 @@ export class MenuService {
   }
 
   /**
-   * 导入当前 Group Panel，建立 Managed Panel 基线。
-   *
-   * 零个候选时创建 group/all Managed Panel 并采用当前 Draft 内容；一个候选时自动接管；
-   * 多个候选且未指定 panelId 时返回 selection-required 与候选列表，由用户选择唯一对象。
+   * 导入指令面板：按使用场景分页拉取 all 面板候选，零候选留空、单候选自动接管、
+   * 多候选由用户为每个场景选择接管对象；被接管场景的条目按同名规则合并成一份列表。
    */
-  async importGroupPanel(input: ImportGroupPanelInput): Promise<ImportGroupPanelResult> {
+  async importCommandPanel(input: ImportCommandPanelInput): Promise<ImportCommandPanelResult> {
     const bot = this.findBot(input.appId)
-    if (!bot) return importGroupFailure('unknown-bot', `未找到 AppID 为 ${input.appId} 的 QQ Bot Instance。`)
-    if (!bot.online) return importGroupFailure('bot-offline', `AppID ${input.appId} 的机器人当前不在线。`)
-    if (!this.platform) return importGroupFailure('platform-error', 'QQ 平台能力不可用。')
+    if (!bot) return importFailure('unknown-bot', `未找到 AppID 为 ${input.appId} 的 QQ Bot Instance。`)
+    if (!bot.online) return importFailure('bot-offline', `AppID ${input.appId} 的机器人当前不在线。`)
+    if (!this.platform) return importFailure('platform-error', 'QQ 平台能力不可用。')
 
     return this.store.runExclusive(input.appId, async () => {
       // 候选选择或平台读取失败时不应留下状态文件，因此这里只合成初始状态，不落盘。
       const state = (await this.store.read(input.appId)) ?? createInitialState(input.appId, this.now().toISOString())
 
-      let panels: PlatformGroupPanel[]
-      try {
-        panels = await this.platform!.listGroupPanels(input.appId)
-      } catch (error) {
-        return importGroupFailure(groupPlatformFailureCode(error), errorMessage(error))
-      }
-
-      const candidates = panels.filter(panel => panel.targetType === 'all')
-      const now = this.now().toISOString()
-
-      let target: PlatformGroupPanel
-      let created = false
-      let version: number | null = null
-
-      if (candidates.length === 0) {
+      const candidatesByScope = new Map<PanelScope, PlatformCommandPanel[]>()
+      const specificPanelsByScope: Partial<Record<PanelScope, CommandPanelCandidate[]>> = {}
+      for (const scope of PANEL_SCOPES) {
+        let panels: PlatformCommandPanel[]
         try {
-          const createdPanel = await this.throttle.run(input.appId, () =>
-            this.platform!.createGroupPanel(input.appId, deepClone(state.draft.groupPanel)))
-          target = {
-            panelId: createdPanel.panelId,
-            targetType: 'all',
-            remark: typeof state.draft.groupPanel.remark === 'string' ? state.draft.groupPanel.remark : '',
-            updatedAt: now,
-            version: createdPanel.version,
-            panel: deepClone(state.draft.groupPanel),
-          }
-          version = createdPanel.version
-          created = true
+          panels = await this.platform!.listCommandPanels(input.appId, scope)
         } catch (error) {
-          return importGroupFailure(groupPlatformFailureCode(error), errorMessage(error))
+          return importFailure(commandPlatformFailureCode(error), errorMessage(error))
         }
-      } else if (input.panelId === undefined) {
-        if (candidates.length > 1) {
-          return importGroupFailure(
-            'selection-required',
-            `发现 ${candidates.length} 个 Group Panel 候选，请选择唯一的接管对象。`,
-            candidates.map(toGroupPanelCandidate),
-          )
-        }
-        target = candidates[0]
-      } else {
-        const selected = candidates.find(panel => panel.panelId === input.panelId)
-        if (!selected) {
-          return importGroupFailure(
-            'panel-missing',
-            `候选列表中不存在 panel ID 为 ${input.panelId} 的 Group Panel。`,
-            candidates.map(toGroupPanelCandidate),
-          )
-        }
-        target = selected
+        // specific 面板既不接管也不删除，只保留 all 面板作为候选并在导入结果里提示。
+        const specific = panels.filter(panel => panel.targetType === 'specific')
+        if (specific.length) specificPanelsByScope[scope] = specific.map(toCommandPanelCandidate)
+        candidatesByScope.set(scope, panels.filter(panel => panel.targetType === 'all'))
       }
 
-      version = version ?? target.version
-      const imported = deepClone(target.panel)
+      const multiScopes = PANEL_SCOPES.filter(scope => (candidatesByScope.get(scope)?.length ?? 0) > 1)
+      const missing = multiScopes.filter(scope => {
+        const selected = input.selections?.[scope]
+        return !selected || !(candidatesByScope.get(scope) ?? []).some(panel => panel.panelId === selected)
+      })
+      if (missing.length) {
+        return importFailure(
+          'selection-required',
+          `发现 ${multiScopes.length} 个场景存在多个候选面板，请为每个场景选择唯一的接管对象。`,
+          multiScopes.map(scope => scopeCandidates(scope, candidatesByScope.get(scope) ?? [])),
+        )
+      }
+
+      const selection = new Map<PanelScope, PlatformCommandPanel>()
+      for (const scope of PANEL_SCOPES) {
+        const candidates = candidatesByScope.get(scope) ?? []
+        if (!candidates.length) continue
+        const chosenId = candidates.length === 1 ? candidates[0].panelId : input.selections![scope]!
+        const chosen = candidates.find(panel => panel.panelId === chosenId)
+        if (!chosen) {
+          return importFailure(
+            'panel-missing',
+            `候选列表中不存在 panel ID 为 ${chosenId} 的指令面板。`,
+            multiScopes.map(item => scopeCandidates(item, candidatesByScope.get(item) ?? [])),
+          )
+        }
+        selection.set(scope, chosen)
+      }
+
+      const merged = mergePanelItems([...selection.entries()].map(([scope, panel]) => ({ scope, panel: panel.panel })))
+      const commandPanel: CommandPanelConfiguration = {
+        remark: typeof state.draft.commandPanel.remark === 'string' ? state.draft.commandPanel.remark : 'menu-edit',
+        items: merged.items,
+      }
+      const scopeExtras: NonNullable<CommandPanelConfiguration['scopeExtras']> = {}
+      for (const [scope, panel] of selection) {
+        const extras: Record<string, unknown> = { ...panel.panel }
+        delete extras.items
+        delete extras.remark
+        if (Object.keys(extras).length) scopeExtras[scope] = extras
+      }
+      if (Object.keys(scopeExtras).length) commandPanel.scopeExtras = scopeExtras
+
+      const now = this.now().toISOString()
+      const commandPanels: PublishedCommandPanels = {}
+      const managedPanelIds: Partial<Record<PanelScope, string>> = {}
+      for (const [scope, panel] of selection) {
+        managedPanelIds[scope] = panel.panelId
+        const otherAllPanelIds = (candidatesByScope.get(scope) ?? [])
+          .filter(candidate => candidate.panelId !== panel.panelId)
+          .map(candidate => candidate.panelId)
+        commandPanels[scope] = {
+          scope,
+          panelId: panel.panelId,
+          panel: deriveScopePanel(commandPanel, scope),
+          version: panel.version,
+          publishedAt: now,
+          cleanup: { panelIds: otherAllPanelIds, updatedAt: otherAllPanelIds.length ? now : null },
+        }
+      }
+
       const importedConfiguration = {
         ...(state.importedConfiguration ?? emptyPanelConfiguration()),
-        groupPanel: deepClone(imported),
-      }
-      const published: PublishedGroupPanel = {
-        panelId: target.panelId,
-        panel: deepClone(imported),
-        version,
-        publishedAt: now,
-        cleanup: { panelIds: [], updatedAt: null },
+        commandPanel: deepClone(commandPanel),
       }
       const next: MenuState = {
         ...state,
         revision: state.revision + 1,
         updatedAt: now,
         importedConfiguration,
-        draft: { ...state.draft, groupPanel: deepClone(imported) },
-        published: { ...state.published, groupPanel: published },
+        draft: { ...state.draft, commandPanel: deepClone(commandPanel) },
+        published: { ...state.published, commandPanels },
       }
       await this.store.write(input.appId, next)
+
       return {
-        ok: true as const,
-        surface: 'groupPanel' as const,
+        ok: true,
+        surface: 'commandPanel',
         revision: next.revision,
         importedAt: now,
-        imported: deepClone(imported),
-        managedPanelId: target.panelId,
-        created,
+        imported: deepClone(commandPanel),
+        managedPanelIds,
+        conflicts: merged.conflicts,
+        specificPanels: specificPanelsByScope,
       }
     })
   }
 
   /**
-   * Publish Group Panel：优先修改已接管的 Managed Panel，不存在时创建新的 group/all Panel，
-   * 写入成功后按用户确认的列表逐项删除其他 group Panel。
+   * Publish 指令面板：校验 Draft 后按场景派生内容，逐场景改写/创建受管面板并清理其他 all 面板。
    *
-   * 连续平台写入由 PanelWriteThrottle 统一节流（至少 6500ms），并发调用无法绕过。
-   * Managed Panel 写入成功即更新 Published Revision；清理未全部完成时返回 partial 并持久化
-   * 待清理 panel ID。校验失败、revision 冲突、40030013 与 Managed Panel 写入失败都保留
-   * Draft 与旧 Published Revision。
+   * 任意场景失败不阻断其他场景；清理失败时该场景标记 partial 并保留待删除 panel ID；
+   * specific 面板既不接管也不删除。
    */
-  async publishGroupPanel(input: GroupPanelPublishInput): Promise<GroupPanelPublishResult> {
+  async publishCommandPanel(input: CommandPanelPublishInput): Promise<CommandPanelPublishResult> {
     const bot = this.findBot(input.appId)
-    if (!bot) return this.groupPanelPublishFailure('unknown-bot', `未找到 AppID 为 ${input.appId} 的 QQ Bot Instance。`)
-    if (!bot.online) return this.groupPanelPublishFailure('bot-offline', `AppID ${input.appId} 的机器人当前不在线。`)
-    if (!this.platform) return this.groupPanelPublishFailure('platform-error', 'QQ 平台能力不可用。')
+    if (!bot) return this.commandPublishFailure('unknown-bot', `未找到 AppID 为 ${input.appId} 的 QQ Bot Instance。`)
+    if (!bot.online) return this.commandPublishFailure('bot-offline', `AppID ${input.appId} 的机器人当前不在线。`)
+    if (!this.platform) return this.commandPublishFailure('platform-error', 'QQ 平台能力不可用。')
 
     return this.store.runExclusive(input.appId, async () => {
       const state = await this.readOrCreate(input.appId)
-      const previous = state.published.groupPanel
+      const previous = state.published.commandPanels
 
       if (state.revision !== input.expectedRevision) {
         return {
           ok: false as const,
-          surface: 'groupPanel' as const,
+          surface: 'commandPanel' as const,
           code: 'revision-conflict' as const,
           message: `revision 冲突：服务端当前为 revision ${state.revision}。`,
           errors: [],
@@ -380,13 +410,13 @@ export class MenuService {
         }
       }
 
-      const validation = validateGroupPanel(state.draft.groupPanel)
+      const validation = validateCommandPanel(state.draft.commandPanel)
       if (validation.errors.length) {
         return {
           ok: false as const,
-          surface: 'groupPanel' as const,
+          surface: 'commandPanel' as const,
           code: 'validation-failed' as const,
-          message: `Group Panel 校验失败：${validation.errors.length} 个硬错误。`,
+          message: `Command Panel 校验失败：${validation.errors.length} 个硬错误。`,
           errors: validation.errors,
           revision: state.revision,
           draft: deepClone(state.draft),
@@ -395,126 +425,170 @@ export class MenuService {
         }
       }
 
-      let panels: PlatformGroupPanel[]
-      try {
-        panels = await this.platform!.listGroupPanels(input.appId)
-      } catch (error) {
-        return {
-          ok: false as const,
-          surface: 'groupPanel' as const,
-          code: groupPlatformFailureCode(error),
-          message: errorMessage(error),
-          errors: [],
-          revision: state.revision,
-          draft: deepClone(state.draft),
-          published: deepClone(previous),
-          candidates: [],
+      const plans: ScopePlan[] = []
+      const resultsByScope = new Map<PanelScope, CommandPanelScopePublishResult>()
+      for (const scope of PANEL_SCOPES) {
+        let panels: PlatformCommandPanel[]
+        try {
+          panels = await this.platform!.listCommandPanels(input.appId, scope)
+        } catch (error) {
+          resultsByScope.set(scope, {
+            scope,
+            status: 'failed',
+            code: commandPlatformFailureCode(error),
+            message: errorMessage(error),
+          })
+          continue
         }
+        const allPanels = panels.filter(panel => panel.targetType === 'all')
+        const managedId = previous[scope]?.panelId
+        const managed = allPanels.find(panel => panel.panelId === managedId)
+        const derived = deriveScopePanel(state.draft.commandPanel, scope)
+        const wantsPanel = derived.items.length > 0
+        const deleteTargets = wantsPanel
+          ? allPanels.filter(panel => panel.panelId !== managed?.panelId)
+          : allPanels
+        plans.push({ scope, managed, derived, deleteTargets })
       }
 
-      const managed = previous ? panels.find(panel => panel.panelId === previous.panelId) : undefined
-      const others = panels.filter(panel => panel.panelId !== managed?.panelId)
-      const otherIds = others.map(panel => panel.panelId)
-
-      // 发布前必须先列出所有其他 group Panel，再由下一次请求确认；仅携带匹配 ID 的单次请求
-      // 不能跳过这一往返。确认结果与平台现状不一致时重新列出。
+      const needConfirmation = plans.filter(plan => plan.deleteTargets.length > 0)
+      const expected: Partial<Record<PanelScope, string[]>> = {}
+      for (const plan of needConfirmation) expected[plan.scope] = plan.deleteTargets.map(panel => panel.panelId)
       const listed = this.cleanupListings.get(input.appId)
-      const confirmed = input.cleanupPanelIds
-      const confirmedMatches = confirmed !== undefined
+      const confirmedMatches = input.cleanupPanelIds !== undefined
         && listed !== undefined
-        && sameStringSet(listed, otherIds)
-        && sameStringSet(confirmed, otherIds)
-      if (!confirmedMatches && (otherIds.length > 0 || confirmed !== undefined)) {
-        this.cleanupListings.set(input.appId, [...otherIds])
+        && sameScopeListing(listed, expected)
+        && sameScopeListing(input.cleanupPanelIds, expected)
+      if (needConfirmation.length > 0 && !confirmedMatches) {
+        this.cleanupListings.set(input.appId, expected)
         return {
           ok: false as const,
-          surface: 'groupPanel' as const,
+          surface: 'commandPanel' as const,
           code: 'cleanup-confirmation-required' as const,
-          message: `发布前需要确认删除 ${otherIds.length} 个其他 group Panel。`,
+          message: `发布前需要确认删除 ${needConfirmation.reduce((sum, plan) => sum + plan.deleteTargets.length, 0)} 个其他指令面板。`,
           errors: [],
           revision: state.revision,
           draft: deepClone(state.draft),
           published: deepClone(previous),
-          candidates: others.map(toGroupPanelCandidate),
+          candidates: needConfirmation.map(plan => scopeCandidates(plan.scope, plan.deleteTargets)),
         }
       }
 
       this.cleanupListings.delete(input.appId)
-      const draftPanel = deepClone(state.draft.groupPanel)
-      let managedPanelId: string
-      let version: number | null
-      try {
-        if (managed) {
-          managedPanelId = managed.panelId
-          const written = await this.throttle.run(input.appId, () =>
-            this.platform!.modifyGroupPanel(input.appId, managed.panelId, draftPanel))
-          version = written.version
-        } else {
-          const created = await this.throttle.run(input.appId, () =>
-            this.platform!.createGroupPanel(input.appId, draftPanel))
-          managedPanelId = created.panelId
-          version = created.version
+
+      const nextCommandPanels: PublishedCommandPanels = deepClone(previous)
+      let changed = false
+      let performedPlatformSuccess = false
+
+      for (const plan of plans) {
+        const { scope } = plan
+        let panelId = plan.managed?.panelId
+        let version = plan.managed?.version ?? null
+
+        if (plan.derived.items.length > 0) {
+          try {
+            if (plan.managed) {
+              const written = await this.throttle.run(input.appId, () =>
+                this.platform!.modifyCommandPanel(input.appId, plan.managed!.panelId, plan.derived))
+              version = written.version
+            } else {
+              const created = await this.throttle.run(input.appId, () =>
+                this.platform!.createCommandPanel(input.appId, scope, plan.derived))
+              panelId = created.panelId
+              version = created.version
+            }
+            performedPlatformSuccess = true
+          } catch (error) {
+            // 某个场景写入失败不阻断其他场景；该场景保留旧 Published Revision。
+            resultsByScope.set(scope, {
+              scope,
+              status: 'failed',
+              code: commandPlatformFailureCode(error),
+              message: errorMessage(error),
+            })
+            continue
+          }
         }
-      } catch (error) {
-        return {
-          ok: false as const,
-          surface: 'groupPanel' as const,
-          code: groupPlatformFailureCode(error),
-          message: errorMessage(error),
-          errors: [],
-          revision: state.revision,
-          draft: deepClone(state.draft),
-          published: deepClone(previous),
-          candidates: [],
+
+        const remaining = await this.deletePanels(input.appId, plan.deleteTargets.map(panel => panel.panelId))
+        const publishedAt = this.now().toISOString()
+
+        if (plan.derived.items.length === 0) {
+          const hadEntry = nextCommandPanels[scope] !== undefined
+          if (remaining.length > 0) {
+            nextCommandPanels[scope] = {
+              scope,
+              panelId: plan.managed?.panelId ?? '',
+              panel: emptyCommandPanel(),
+              version,
+              publishedAt,
+              cleanup: { panelIds: remaining, updatedAt: publishedAt },
+            }
+            changed = true
+          } else if (hadEntry) {
+            delete nextCommandPanels[scope]
+            changed = true
+          }
+          resultsByScope.set(scope, { scope, status: remaining.length > 0 ? 'partial' : 'success' })
+          continue
         }
-      }
 
-      // Managed Panel 写入成功后先落盘 Published Revision 与待清理列表，再开始删除其他面板。
-      const publishedAt = this.now().toISOString()
-      const pendingIds = [...otherIds]
-      const published: PublishedGroupPanel = {
-        panelId: managedPanelId,
-        panel: draftPanel,
-        version,
-        publishedAt,
-        cleanup: { panelIds: [...pendingIds], updatedAt: pendingIds.length ? publishedAt : null },
-      }
-      const next: MenuState = {
-        ...state,
-        revision: state.revision + 1,
-        updatedAt: publishedAt,
-        published: { ...state.published, groupPanel: published },
-      }
-      await this.store.write(input.appId, next)
-
-      const remaining = new Set(pendingIds)
-      for (const panelId of pendingIds) {
-        try {
-          await this.throttle.run(input.appId, () => this.platform!.deleteGroupPanel(input.appId, panelId))
-          remaining.delete(panelId)
-        } catch {
-          // 删除失败的面板与尚未尝试的面板都保留在待清理列表，稍后重试。
+        nextCommandPanels[scope] = {
+          scope,
+          panelId: panelId!,
+          panel: deepClone(plan.derived),
+          version,
+          publishedAt,
+          cleanup: { panelIds: remaining, updatedAt: remaining.length ? publishedAt : null },
         }
+        changed = true
+        resultsByScope.set(scope, { scope, status: remaining.length > 0 ? 'partial' : 'success' })
       }
 
-      const pending = pendingIds.filter(panelId => remaining.has(panelId))
-      if (pending.length !== pendingIds.length) {
-        const cleanupUpdatedAt = pending.length ? this.now().toISOString() : null
-        published.cleanup = { panelIds: pending, updatedAt: cleanupUpdatedAt }
-        next.updatedAt = cleanupUpdatedAt ?? published.publishedAt
-        await this.store.write(input.appId, next)
+      const scopeResults = PANEL_SCOPES
+        .map(scope => resultsByScope.get(scope))
+        .filter((result): result is CommandPanelScopePublishResult => result !== undefined)
+      const hasFailed = scopeResults.some(result => result.status === 'failed')
+
+      // 有平台写入但本地状态没变的成功发布也递增 revision；纯失败则不写状态。
+      const shouldPersist = changed || performedPlatformSuccess
+      const nextRevision = shouldPersist ? state.revision + 1 : state.revision
+      if (shouldPersist) {
+        const updatedAt = this.now().toISOString()
+        await this.store.write(input.appId, {
+          ...state,
+          revision: nextRevision,
+          updatedAt,
+          published: { ...state.published, commandPanels: nextCommandPanels },
+        })
       }
 
+      const pending = Object.values(nextCommandPanels).some(panel => panel && panel.cleanup.panelIds.length > 0)
       return {
         ok: true as const,
-        surface: 'groupPanel' as const,
-        status: pending.length ? 'partial' as const : 'published' as const,
-        published: deepClone(published),
-        revision: next.revision,
+        surface: 'commandPanel' as const,
+        status: hasFailed || pending ? 'partial' as const : 'published' as const,
+        published: deepClone(nextCommandPanels),
+        scopeResults,
+        revision: nextRevision,
         warnings: validation.warnings,
       }
     })
   }
+
+  /** 删除一组面板，返回删除失败的 panel ID（保留在待清理列表）。 */
+  private async deletePanels(appId: string, panelIds: string[]): Promise<string[]> {
+    const remaining: string[] = []
+    for (const panelId of panelIds) {
+      try {
+        await this.throttle.run(appId, () => this.platform!.deleteCommandPanel(appId, panelId))
+      } catch {
+        remaining.push(panelId)
+      }
+    }
+    return remaining
+  }
+
   /**
    * 所有 Draft 变更共用的 read-modify-write：读取、校验 revision、计算新 Draft、
    * 递增 revision 并写入，整段在一个 AppID 的互斥段内完成。
@@ -593,20 +667,20 @@ export class MenuService {
     }
   }
 
-  /** Group Panel 早于状态读取的失败：回传空 revision / Draft 占位。 */
-  private groupPanelPublishFailure(
+  /** Command Panel 早于状态读取的失败：回传空 revision / Draft 占位。 */
+  private commandPublishFailure(
     code: 'unknown-bot' | 'bot-offline' | 'platform-error',
     message: string,
-  ): GroupPanelPublishResult {
+  ): CommandPanelPublishResult {
     return {
       ok: false,
-      surface: 'groupPanel',
+      surface: 'commandPanel',
       code,
       message,
       errors: [],
       revision: 0,
       draft: emptyPanelConfiguration(),
-      published: null,
+      published: {},
       candidates: [],
     }
   }
@@ -624,8 +698,21 @@ function platformFailureCode(error: unknown): 'bot-offline' | 'platform-error' |
   }
   return 'platform-error'
 }
-/** 把平台 panel 收敛成 UI 确认框使用的候选摘要。 */
-function toGroupPanelCandidate(panel: PlatformGroupPanel): GroupPanelCandidate {
+
+/** 指令面板平台异常码；quantity-limit 对应 QQ 40030013。 */
+function commandPlatformFailureCode(
+  error: unknown,
+): 'bot-offline' | 'platform-error' | 'unknown-bot' | 'quantity-limit' {
+  if (error instanceof MenuPlatformError) {
+    if (error.code === 'quantity-limit') return 'quantity-limit'
+    if (error.code === 'bot-offline') return 'bot-offline'
+    if (error.code === 'bot-missing') return 'unknown-bot'
+  }
+  return 'platform-error'
+}
+
+/** 把平台面板收敛成 UI 确认框使用的候选摘要。 */
+function toCommandPanelCandidate(panel: PlatformCommandPanel): CommandPanelCandidate {
   const items = Array.isArray(panel.panel.items) ? panel.panel.items : []
   const names = items
     .map(item => (isRecord(item) && typeof item.name === 'string' ? item.name.trim() : ''))
@@ -642,28 +729,28 @@ function toGroupPanelCandidate(panel: PlatformGroupPanel): GroupPanelCandidate {
   }
 }
 
+function scopeCandidates(scope: PanelScope, panels: PlatformCommandPanel[]): CommandPanelScopeCandidates {
+  return { scope, candidates: panels.map(toCommandPanelCandidate) }
+}
+
+/** 比较两份「场景 -> panel ID 列表」，忽略顺序。 */
+function sameScopeListing(
+  left: Partial<Record<PanelScope, string[]>>,
+  right: Partial<Record<PanelScope, string[]>>,
+): boolean {
+  return PANEL_SCOPES.every(scope => sameStringSet(left[scope] ?? [], right[scope] ?? []))
+}
+
 function sameStringSet(left: string[], right: string[]): boolean {
   if (left.length !== right.length) return false
   const set = new Set(left)
   return right.every(value => set.has(value))
 }
 
-function importGroupFailure(
-  code: ImportGroupPanelFailure['code'],
+function importFailure(
+  code: ImportCommandPanelFailure['code'],
   message: string,
-  candidates: GroupPanelCandidate[] = [],
-): ImportGroupPanelFailure {
-  return { ok: false, surface: 'groupPanel', code, message, candidates }
-}
-
-/** Group Panel 平台异常码；quantity-limit 对应 QQ 40030013。 */
-function groupPlatformFailureCode(
-  error: unknown,
-): 'bot-offline' | 'platform-error' | 'unknown-bot' | 'quantity-limit' {
-  if (error instanceof MenuPlatformError) {
-    if (error.code === 'quantity-limit') return 'quantity-limit'
-    if (error.code === 'bot-offline') return 'bot-offline'
-    if (error.code === 'bot-missing') return 'unknown-bot'
-  }
-  return 'platform-error'
+  candidates: CommandPanelScopeCandidates[] = [],
+): ImportCommandPanelFailure {
+  return { ok: false, surface: 'commandPanel', code, message, candidates }
 }
