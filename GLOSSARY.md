@@ -48,6 +48,10 @@ _Avoid_: 线上版本, 当前菜单
 将 Draft 下发到某个 Bot Instance 的 Private Menu 和 Command Panel，并把成功结果记录为 Published Revision。
 _Avoid_: 同步, 保存, 上架
 
+**Import**:
+从平台读取某个 Bot Instance 的 Private Menu 与 Command Panel 现状，写入 Draft，并把平台现状记为 Published Revision。
+_Avoid_: 同步, 拉取, 刷新
+
 **Drift**:
 平台当前菜单与 Published Revision 不一致的状态。
 _Avoid_: 差异, 变更

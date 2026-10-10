@@ -15,6 +15,9 @@ export const PANEL_NAME = '机器人菜单'
 
 const AUTO_SAVE_DELAY = 900
 
+/** 机器人离线时禁用按钮的悬浮提示；与页面顶部离线告警条同源。 */
+const OFFLINE_ACTION_HINT = '机器人当前离线，无法导入或发布。'
+
 type SaveStatus = 'saved' | 'saving' | 'failed' | 'unsaved'
 type TabKey = 'private' | 'command'
 type ViewMode = 'visual' | 'json'
@@ -295,6 +298,14 @@ export default defineComponent({
     const activeBotOnline = (bot: BotInstanceSummary | undefined) =>
       bot ? resolveBotOnline(bot, store.status) : false
 
+    const activeBot = () => state.bots.find(bot => bot.appId === state.activeAppId)
+
+    /** 当前选中的应用实例是否离线；没有选中实例时返回 false，按钮另有 !activeAppId 守卫。 */
+    const activeBotOffline = () => {
+      const bot = activeBot()
+      return !!bot && !activeBotOnline(bot)
+    }
+
     let timer: ReturnType<typeof setTimeout> | undefined
     const cancelAutoSave = () => {
       if (!timer) return
@@ -527,16 +538,15 @@ export default defineComponent({
 
     const importPrivateMenu = async () => {
       if (!state.activeAppId || state.importing) return
-      if (isDirty()) {
-        try {
-          await messageBox.confirm(
-            '导入会用平台当前私聊菜单覆盖草稿，并记为导入内容。是否继续？',
-            '导入私聊菜单',
-            { type: 'warning', confirmButtonText: '导入', cancelButtonText: '取消' },
-          )
-        } catch {
-          return
-        }
+      // 导入是破坏性操作：即便草稿不 dirty 也覆盖 Draft 并重记 Published Revision，因此每次都确认。
+      try {
+        await messageBox.confirm(
+          '导入会用平台当前私聊菜单覆盖草稿，并记为导入内容。是否继续？',
+          '导入私聊菜单',
+          { type: 'warning', confirmButtonText: '导入', cancelButtonText: '取消' },
+        )
+      } catch {
+        return
       }
       cancelAutoSave()
       state.importing = true
@@ -558,7 +568,8 @@ export default defineComponent({
 
     const importCommandPanel = async (selections?: Partial<Record<PanelScope, string>>) => {
       if (!state.activeAppId || state.importing) return
-      if (selections === undefined && isDirty()) {
+      // 首次入口（selections 为空）每次都确认；多候选时候选选择本身即确认，接管按钮不再叠加弹窗。
+      if (selections === undefined) {
         try {
           await messageBox.confirm(
             '导入会用平台当前指令面板覆盖草稿，并记为导入内容。是否继续？',
@@ -964,7 +975,8 @@ export default defineComponent({
       h('button', {
         type: 'button',
         class: 'me-button',
-        disabled: state.loading || state.importing || !state.activeAppId,
+        title: activeBotOffline() ? OFFLINE_ACTION_HINT : undefined,
+        disabled: state.loading || state.importing || !state.activeAppId || activeBotOffline(),
         onClick: () => void (state.tab === 'command' ? importCommandPanel() : importPrivateMenu()),
       }, state.importing ? '导入中…' : (state.tab === 'command' ? '导入指令面板' : '导入私聊菜单')),
       h('button', { type: 'button', class: 'me-button', disabled: state.loading, onClick: () => void reload() }, '重新加载'),
@@ -973,10 +985,19 @@ export default defineComponent({
       h('button', {
         type: 'button',
         class: 'me-button me-primary',
-        disabled: state.loading || state.publishing || !state.activeAppId,
+        title: activeBotOffline() ? OFFLINE_ACTION_HINT : undefined,
+        disabled: state.loading || state.publishing || !state.activeAppId || activeBotOffline(),
         onClick: () => void publishAll(),
       }, state.publishing ? '发布中…' : '发布'),
     ])
+
+    /** 当前应用实例离线时的页面顶部告警条；离线门禁只覆盖导入与发布。 */
+    const renderOffline = () => {
+      const bot = activeBot()
+      if (!bot || activeBotOnline(bot)) return null
+      return h('div', { class: ['me-alert', 'me-alert-warn'] },
+        `机器人「${bot.name || bot.appId}」当前离线：已暂时禁用导入与发布功能，机器人上线后恢复。`)
+    }
 
     const renderConflict = () => state.conflict
       ? h('div', { class: 'me-alert me-alert-warn me-conflict' }, [
@@ -1038,7 +1059,8 @@ export default defineComponent({
         h('button', {
           type: 'button',
           class: 'me-button me-primary',
-          disabled: state.importing || state.importCandidates.some(group => !state.importSelections[group.scope]),
+          title: activeBotOffline() ? OFFLINE_ACTION_HINT : undefined,
+          disabled: state.importing || activeBotOffline() || state.importCandidates.some(group => !state.importSelections[group.scope]),
           onClick: () => void importCommandPanel(state.importSelections),
         }, state.importing ? '导入中…' : '接管所选面板'),
       ])
@@ -1072,8 +1094,6 @@ export default defineComponent({
         h('button', { type: 'button', class: 'me-button', disabled: !!state.jsonError, onClick: formatJson }, '格式化配置文本'),
       ]),
     ])
-
-    const activeBot = () => state.bots.find(bot => bot.appId === state.activeAppId)
 
     const renderVisual = () => {
       if (state.tab === 'command') {
@@ -1125,6 +1145,7 @@ export default defineComponent({
     return () => {
       const layout = resolveComponent('k-layout')
       const children = [
+        renderOffline(),
         renderToolbar(),
         renderConflict(),
         renderIssueSummary(),
