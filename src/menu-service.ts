@@ -6,7 +6,7 @@
  * `MenuStateStore.runExclusive`，revision 校验和写文件必须处在同一个互斥段内。
  */
 import type { BotRegistry } from './bot-registry'
-import { compareMenuItems, deriveScopeItems, deriveScopePanel, mergePanelItems, panelItemScopes, stripPanelItemScopes } from './command-panel'
+import { collectScopeExtras, compareMenuItems, deriveScopeItems, deriveScopePanel, mergePanelItems, panelItemScopes, stripPanelItemScopes } from './command-panel'
 import { normalizePanelConfiguration } from './configuration'
 import { isRecord } from './guards'
 import {
@@ -40,13 +40,16 @@ import {
   type ImportPrivateMenuInput,
   type ImportPrivateMenuResult,
   type MenuState,
-  type MenuItemDiff,
   type PublishedCommandPanel,
   type PanelConfiguration,
   type PanelScope,
   type PrivateMenuConfiguration,
   type PrivateMenuPublishInput,
   type PrivateMenuPublishResult,
+  type PublishMenuFailure,
+  type PublishMenuFailureCode,
+  type PublishMenuInput,
+  type PublishMenuResult,
   type RefreshPlatformFailure,
   type RefreshPlatformInput,
   type PrivateMenuDriftReport,
@@ -298,6 +301,20 @@ export class MenuService {
         }
       }
 
+      if (validation.warnings.length > 0 && input.confirmWarnings !== true) {
+        return {
+          ok: false as const,
+          surface: 'privateMenu' as const,
+          code: 'warning-confirmation-required' as const,
+          message: `私聊菜单存在 ${validation.warnings.length} 条警告，请确认后继续发布。`,
+          errors: [],
+          warnings: validation.warnings,
+          revision: state.revision,
+          draft: deepClone(state.draft),
+          published: deepClone(state.published.privateMenu),
+        }
+      }
+
       // Publish 前读取 Platform State；存在 Drift 时必须由用户显式确认才允许覆盖。
       let platformMenu: PlatformPrivateMenu
       try {
@@ -418,19 +435,14 @@ export class MenuService {
         selection.set(scope, chosen)
       }
 
-      const merged = mergePanelItems([...selection.entries()].map(([scope, panel]) => ({ scope, panel: panel.panel })))
+      const sources = [...selection.entries()].map(([scope, panel]) => ({ scope, panel: panel.panel }))
+      const merged = mergePanelItems(sources)
       const commandPanel: CommandPanelConfiguration = {
         remark: typeof state.draft.commandPanel.remark === 'string' ? state.draft.commandPanel.remark : 'menu-edit',
         items: merged.items,
       }
-      const scopeExtras: NonNullable<CommandPanelConfiguration['scopeExtras']> = {}
-      for (const [scope, panel] of selection) {
-        const extras: Record<string, unknown> = { ...panel.panel }
-        delete extras.items
-        delete extras.remark
-        if (Object.keys(extras).length) scopeExtras[scope] = extras
-      }
-      if (Object.keys(scopeExtras).length) commandPanel.scopeExtras = scopeExtras
+      const scopeExtras = collectScopeExtras(sources)
+      if (scopeExtras) commandPanel.scopeExtras = scopeExtras
 
       const now = this.now().toISOString()
       const commandPanels: PublishedCommandPanels = {}
@@ -515,6 +527,21 @@ export class MenuService {
           code: 'validation-failed' as const,
           message: `指令面板校验失败：${validation.errors.length} 个硬错误。`,
           errors: validation.errors,
+          revision: state.revision,
+          draft: deepClone(state.draft),
+          published: deepClone(previous),
+          candidates: [],
+        }
+      }
+
+      if (validation.warnings.length > 0 && input.confirmWarnings !== true) {
+        return {
+          ok: false as const,
+          surface: 'commandPanel' as const,
+          code: 'warning-confirmation-required' as const,
+          message: `指令面板存在 ${validation.warnings.length} 条警告，请确认后继续发布。`,
+          errors: [],
+          warnings: validation.warnings,
           revision: state.revision,
           draft: deepClone(state.draft),
           published: deepClone(previous),
@@ -711,6 +738,145 @@ export class MenuService {
         cleanupFailures: deepClone(cleanupFailuresByScope),
       }
     })
+  }
+
+  /**
+   * 统一 Publish：一个服务端入口先对两类 surface 做校验、Drift 与待清理检查，
+   * 需要确认时返回 confirmation-required；确认齐全后才分别写入 Private Menu 与各场景
+   * Command Panel，并按 surface 分别返回结果，不假装存在跨平台事务。
+   */
+  async publishMenu(input: PublishMenuInput): Promise<PublishMenuResult> {
+    const bot = this.findBot(input.appId)
+    if (!bot) return this.publishMenuFailure('unknown-bot', `未找到应用 ID 为 ${input.appId} 的 QQ 应用实例。`)
+    if (!bot.online) return this.publishMenuFailure('bot-offline', `应用 ID ${input.appId} 的机器人当前不在线。`)
+    if (!this.platform) return this.publishMenuFailure('platform-error', 'QQ 平台能力不可用。')
+
+    const state = await this.store.runExclusive(input.appId, () => this.readOrCreate(input.appId))
+    const draft = deepClone(state.draft)
+    if (state.revision !== input.expectedRevision) {
+      return {
+        ok: false,
+        code: 'revision-conflict',
+        message: `版本冲突：服务端当前版本为 ${state.revision}。`,
+        revision: state.revision,
+        draft,
+        errors: [],
+        warnings: [],
+      }
+    }
+
+    const privateValidation = validatePrivateMenu(state.draft.privateMenu)
+    const commandValidation = validateCommandPanel(state.draft.commandPanel)
+    const errors = [...privateValidation.errors, ...commandValidation.errors]
+    const warnings = [...privateValidation.warnings, ...commandValidation.warnings]
+    if (errors.length > 0) {
+      return {
+        ok: false,
+        code: 'validation-failed',
+        message: `Publish 被阻止：Private Menu 与 Command Panel 共 ${errors.length} 个硬错误。`,
+        revision: state.revision,
+        draft,
+        errors,
+        warnings,
+      }
+    }
+
+    // 前置检查只读平台：Private Menu Drift、四个场景 Drift 与按场景待清理面板一次算清。
+    const privateDrift = await this.readPrivateMenuDrift(input.appId, state)
+    const scopes: ScopeDriftReport[] = []
+    const cleanup: CommandPanelScopeCandidates[] = []
+    for (const scope of PANEL_SCOPES) {
+      let panels: PlatformCommandPanel[]
+      try {
+        panels = await this.platform.listCommandPanels(input.appId, scope)
+      } catch (error) {
+        scopes.push({
+          surface: 'commandPanel',
+          scope,
+          state: 'error',
+          diffs: [],
+          message: `平台读取失败：${errorMessage(error)}`,
+        })
+        continue
+      }
+      scopes.push(scopeDriftReport(scope, panels, state.draft.commandPanel, state.published.commandPanels[scope]))
+      const allPanels = panels.filter(panel => panel.targetType === 'all')
+      const managedId = state.published.commandPanels[scope]?.panelId
+      const wantsPanel = deriveScopePanel(state.draft.commandPanel, scope).items.length > 0
+      const deleteTargets = wantsPanel
+        ? allPanels.filter(panel => panel.panelId !== managedId)
+        : allPanels
+      if (deleteTargets.length > 0) cleanup.push(scopeCandidates(scope, deleteTargets))
+    }
+    const drift: DriftReport = { privateMenu: privateDrift, scopes }
+
+    const expectedCleanup: Partial<Record<PanelScope, string[]>> = {}
+    for (const group of cleanup) expectedCleanup[group.scope] = group.candidates.map(candidate => candidate.panelId)
+    const listed = this.cleanupListings.get(input.appId)
+    const cleanupConfirmed = cleanup.length === 0
+      || (input.cleanupPanelIds !== undefined
+        && listed !== undefined
+        && sameScopeListing(listed, expectedCleanup)
+        && sameScopeListing(input.cleanupPanelIds, expectedCleanup))
+
+    const privateChanged = privateDrift.state === 'changed' || privateDrift.state === 'missing'
+    const changedScopes = scopes.filter(scope => scope.state === 'changed' || scope.state === 'missing')
+    const confirmedScopes = input.confirmDrift?.scopes ?? {}
+    const needsConfirmation = (warnings.length > 0 && input.confirmWarnings !== true)
+      || (privateChanged && input.confirmDrift?.privateMenu !== true)
+      || changedScopes.some(scope => confirmedScopes[scope.scope] !== true)
+      || !cleanupConfirmed
+    if (needsConfirmation) {
+      // 记录本次列出的待清理对象；确认重试必须与之一致，防止跳过「先列出再确认」。
+      if (cleanup.length > 0) this.cleanupListings.set(input.appId, expectedCleanup)
+      return {
+        ok: false,
+        code: 'confirmation-required',
+        message: '发布前需要按分区确认警告、Drift 与待清理面板。',
+        revision: state.revision,
+        draft,
+        errors,
+        warnings,
+        drift,
+        cleanup,
+      }
+    }
+
+    // 确认齐全后才写入：两类 surface 分别写入、分别返回结果。
+    const privateResult = await this.publishPrivateMenu({
+      appId: input.appId,
+      expectedRevision: state.revision,
+      confirmDrift: input.confirmDrift,
+      confirmWarnings: input.confirmWarnings,
+    })
+    const commandResult = await this.publishCommandPanel({
+      appId: input.appId,
+      expectedRevision: privateResult.revision,
+      cleanupPanelIds: input.cleanupPanelIds,
+      confirmDrift: input.confirmDrift,
+      confirmWarnings: input.confirmWarnings,
+    })
+    const published = privateResult.ok && commandResult.ok && commandResult.status === 'published'
+    return {
+      ok: true,
+      status: published ? 'published' : 'partial',
+      revision: commandResult.revision,
+      privateMenu: privateResult,
+      commandPanel: commandResult,
+    }
+  }
+
+  /** 统一 Publish 的早失败结果；尚未读到状态时回传空配置与 revision 0。 */
+  private publishMenuFailure(code: PublishMenuFailureCode, message: string): PublishMenuFailure {
+    return {
+      ok: false,
+      code,
+      message,
+      revision: 0,
+      draft: emptyPanelConfiguration(),
+      errors: [],
+      warnings: [],
+    }
   }
 
   /**
@@ -941,17 +1107,23 @@ function scopeDriftReport(
     panel => panel.targetType === 'all' && panel.panelId === publishedPanel.panelId)
   if (!platformPanel) return { surface: 'commandPanel', scope, state: 'missing', diffs: [] }
 
-  const draftItems = deriveScopeItems(draftPanel, scope)
-  if (samePanelItems(draftItems, platformPanel.panel.items)
-    && samePanelItems(platformPanel.panel.items, publishedPanel.panel.items)) {
+  // Drift 的定义是 Platform State 与 Published Revision 不一致。只比较 Draft 与平台差异的
+  // (kind, name) 签名，会把「平台与上次发布不同、但差异形状恰好一致」的字段修改误判为无
+  // 漂移，从而既不提示也不要求确认。这里按已知字段比较平台内容与 Published Revision，与
+  // compareMenuItems 的对比口径一致（忽略顺序、本地 scopes 与未知字段）。
+  const platformItems = Array.isArray(platformPanel.panel.items) ? platformPanel.panel.items : []
+  const publishedItems = Array.isArray(publishedPanel.panel.items) ? publishedPanel.panel.items : []
+  if (compareMenuItems(platformItems, publishedItems).length === 0) {
     return { surface: 'commandPanel', scope, state: 'same', diffs: [] }
   }
 
-  const baseline = compareMenuItems(draftItems, publishedPanel.panel.items)
-  const drift = compareMenuItems(draftItems, platformPanel.panel.items)
-  const sameDiff = (a: MenuItemDiff, b: MenuItemDiff) => a.kind === b.kind && a.name === b.name
-  const unchanged = baseline.length === drift.length && baseline.every((diff, index) => sameDiff(diff, drift[index]))
-  return { surface: 'commandPanel', scope, state: unchanged ? 'same' : 'changed', diffs: drift }
+  const draftItems = deriveScopeItems(draftPanel, scope)
+  return {
+    surface: 'commandPanel',
+    scope,
+    state: 'changed',
+    diffs: compareMenuItems(draftItems, platformPanel.panel.items),
+  }
 }
 
 function samePrivateMenu(left: PrivateMenuConfiguration, right: PrivateMenuConfiguration): boolean {

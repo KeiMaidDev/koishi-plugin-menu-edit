@@ -55,11 +55,11 @@ async function publishWithCleanup(
   expectedRevision: number,
   cleanupPanelIds: Partial<Record<PanelScope, string[]>>,
 ) {
-  const listed = await instance.service.publishCommandPanel({ appId: '100', expectedRevision })
+  const listed = await instance.service.publishCommandPanel({ appId: '100', expectedRevision, confirmWarnings: true })
   assert.equal(listed.ok, false)
   if (listed.ok) assert.fail('期望先返回 cleanup-confirmation-required')
   assert.equal(listed.code, 'cleanup-confirmation-required')
-  return instance.service.publishCommandPanel({ appId: '100', expectedRevision, cleanupPanelIds })
+  return instance.service.publishCommandPanel({ appId: '100', expectedRevision, cleanupPanelIds, confirmWarnings: true })
 }
 
 describe('Command Panel：按场景派生', () => {
@@ -232,7 +232,7 @@ describe('MenuService：Command Panel 发布', () => {
   it('同一场景没有候选时创建 all 面板', async () => {
     const instance = harness()
     const revision = await saveCommand(instance, 0, commandPanel([commandItem('/created', ['c2c'])]))
-    const result = await instance.service.publishCommandPanel({ appId: '100', expectedRevision: revision })
+    const result = await instance.service.publishCommandPanel({ appId: '100', expectedRevision: revision, confirmWarnings: true })
     assert.ok(result.ok)
     if (!result.ok) return
 
@@ -271,7 +271,7 @@ describe('MenuService：Command Panel 发布', () => {
       commandItem('/c2', ['c2c']),
     ]))
 
-    const result = await instance.service.publishCommandPanel({ appId: '100', expectedRevision: revision })
+    const result = await instance.service.publishCommandPanel({ appId: '100', expectedRevision: revision, confirmWarnings: true })
     assert.ok(result.ok)
 
     const writes = instance.platform.panelWrites.filter(write => write.appId === '100')
@@ -286,7 +286,7 @@ describe('MenuService：Command Panel 发布', () => {
     const revision = await saveCommand(instance, 1, commandPanel([commandItem('/new', ['group'])]))
     instance.platform.modifyPanelError = new MenuPlatformError('quantity-limit', '40030013')
 
-    const result = await instance.service.publishCommandPanel({ appId: '100', expectedRevision: revision })
+    const result = await instance.service.publishCommandPanel({ appId: '100', expectedRevision: revision, confirmWarnings: true })
     assert.ok(result.ok)
     if (!result.ok) return
     assert.equal(result.status, 'partial')
@@ -311,7 +311,7 @@ describe('MenuService：Command Panel 发布', () => {
     ]))
     instance.platform.createPanelErrors.set('c2c', new MenuPlatformError('platform-error', 'c2c failed'))
 
-    const result = await instance.service.publishCommandPanel({ appId: '100', expectedRevision: revision })
+    const result = await instance.service.publishCommandPanel({ appId: '100', expectedRevision: revision, confirmWarnings: true })
     assert.ok(result.ok)
     if (!result.ok) return
     assert.equal(result.status, 'partial')

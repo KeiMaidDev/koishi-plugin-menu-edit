@@ -101,6 +101,42 @@ describe('Drift：刷新平台状态', () => {
     if (!('privateMenu' in report)) return
     assert.equal(report.scopes.find(scope => scope.scope === 'group')?.state, 'error')
   })
+
+  it('平台只改字段（同名同类型）时仍报告 changed，并照常要求 Drift 确认', async () => {
+    const instance = harness()
+    instance.platform.seedCommandPanel('100', 'p-g', 'group', commandPanel([commandItem('/g', ['group'], { desc: 'old' })]), { version: 5 })
+    await instance.service.importCommandPanel({ appId: '100' })
+
+    const revision = (await instance.service.loadWorkspace('100')).revision
+    const saved = await instance.service.saveDraft({
+      appId: '100',
+      expectedRevision: revision,
+      configuration: configuration({ commandPanel: commandPanel([commandItem('/g', ['group'], { desc: 'draft' })]) }),
+    })
+    assert.ok(saved.ok)
+    if (!saved.ok) return
+
+    // 外部写入者只改 desc：Draft 与平台的差异形状和 Draft 与 Published 的差异形状完全相同，
+    // 旧的 (kind, name) 签名比较会误判为 same，从而既不提示也不要求确认。
+    instance.platform.seedCommandPanel('100', 'p-g', 'group', commandPanel([commandItem('/g', ['group'], { desc: 'external' })]), { version: 6 })
+
+    const report = await instance.service.refreshPlatform({ appId: '100' })
+    assert.ok('privateMenu' in report)
+    if (!('privateMenu' in report)) return
+    const group = report.scopes.find(scope => scope.scope === 'group')
+    assert.equal(group?.state, 'changed')
+    assert.deepEqual(group?.diffs, [{ kind: 'modified', name: '/g' }])
+
+    const blocked = await instance.service.publishCommandPanel({
+      appId: '100',
+      expectedRevision: saved.revision,
+      confirmWarnings: true,
+    })
+    assert.equal(blocked.ok, false)
+    if (blocked.ok) return
+    assert.equal(blocked.code, 'drift-confirmation-required')
+    assert.equal(instance.platform.panelWrites.length, 0)
+  })
 })
 
 describe('Drift：Publish 确认门禁', () => {
@@ -137,7 +173,7 @@ describe('Drift：Publish 确认门禁', () => {
     instance.platform.seedCommandPanel('100', 'p-g', 'group', commandPanel([commandItem('/external', ['group'])]), { version: 6 })
 
     const revision = (await instance.service.loadWorkspace('100')).revision
-    const blocked = await instance.service.publishCommandPanel({ appId: '100', expectedRevision: revision })
+    const blocked = await instance.service.publishCommandPanel({ appId: '100', expectedRevision: revision, confirmWarnings: true })
     assert.equal(blocked.ok, false)
     if (blocked.ok) return
     assert.equal(blocked.code, 'drift-confirmation-required')
@@ -148,6 +184,7 @@ describe('Drift：Publish 确认门禁', () => {
       appId: '100',
       expectedRevision: revision,
       confirmDrift: { scopes: { group: true } },
+      confirmWarnings: true,
     })
     assert.ok(confirmed.ok)
     assert.ok(instance.platform.panelWrites.some(write => write.op === 'modify' && write.panelId === 'p-g'))
@@ -161,11 +198,12 @@ describe('Drift：Publish 确认门禁', () => {
 
     // 第一次发布成功后 revision 递增；携带旧 expected revision 的第二次发布必须失败，
     // 这就是「发布请求携带 expected revision、期间被改写则失败」的门禁。
-    await instance.service.publishCommandPanel({ appId: '100', expectedRevision: revision })
+    await instance.service.publishCommandPanel({ appId: '100', expectedRevision: revision, confirmWarnings: true })
     const stale = await instance.service.publishCommandPanel({
       appId: '100',
       expectedRevision: revision,
       confirmDrift: { scopes: { group: true } },
+      confirmWarnings: true,
     })
     assert.equal(stale.ok, false)
     if (stale.ok) return

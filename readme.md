@@ -33,6 +33,8 @@ Publish 单独触发。
 - Command Panel 连续平台写入跨场景按 AppID 串行并强制至少间隔 6500ms；清理部分失败时该
   场景返回 partial 并持久化待清理 panel ID。
 - JSON 模式与结构化模式双向同步，未知字段在保存与 Publish 后原样保留。
+- Publish 是一个服务端入口（`menu-edit/publish`）：统一编排 Private Menu 与四个使用场景的
+  Command Panel，先做校验、Drift 检测与待删除面板检查，确认齐全后再分别写入、分别报告结果。
 - Publish Private Menu 通过 `setMenu` 整体覆盖写入平台：成功更新 Published Revision，
   失败（revision 冲突 / 硬校验错误 / 平台错误）保留 Draft 与旧 Published Revision。
 - 携带 expected revision 的 Draft 保存；过期 revision 返回 `revision-conflict`，可选择重载或强制覆盖。
@@ -44,9 +46,11 @@ Publish 单独触发。
   Published Revision。
 - 发布安全层（issue #5）：结构化与 JSON 模式共用同一套校验；非法 JSON、数量超限、
   必填字段缺失、类型错误、非 `https://` 链接与空使用场景阻止 Publish，描述为空、
-  同场景重名、重复 switch ID 与导入同名冲突以警告形式要求确认。
-- 「刷新平台状态」手动读取 Private Menu 与四个使用场景的平台内容，并按
-  未发布 / 一致 / 有变化 / 面板缺失 / 读取失败展示 Drift；平台读取失败不影响其他场景。
+  同场景重名、重复 switch ID 与导入同名冲突以警告形式要求确认。警告与 Drift 的确认由服务端
+  Publish 入口强制校验，绕过页面直接调用 RPC 同样不会写入平台。
+- 打开或切换 Bot Instance 时自动读取一次平台状态；「刷新平台状态」可手动重读 Private Menu
+  与四个使用场景的平台内容，并按未发布 / 一致 / 有变化 / 面板缺失 / 读取失败展示 Drift；
+  平台读取失败不影响其他场景。
 - Drift 不阻止发布，但存在 Drift 时必须先确认；Publish 携带 expected revision，
   Draft 被其他页面改写时发布失败并要求重新确认。
 - 页面与所有读取/写入 RPC 均要求 `authority: 4`。
@@ -79,9 +83,13 @@ Publish 单独触发。
 
 ### Publish
 
-1. 确认 Draft 内容无误后点击「Publish」。
-2. 发布前会按场景列出其他 all 面板并要求确认（成功写入后逐项清理）。
-3. 发布按场景串行写入，间隔至少 6500ms；某场景失败不阻断其他场景，结果按场景聚合为成功 / 失败 / partial。
+1. 确认 Draft 内容无误后点击「Publish」。Publish 是一个服务端入口：一次编排 Private Menu
+   与四个使用场景的 Command Panel，但两类 surface 分别写入、分别返回结果，不假装存在跨平台事务。
+2. 发布前统一执行校验、Drift 检测与待删除面板检查，并在同一个确认框里按硬错误、警告、按场景
+   Drift 和按场景待删除面板分区展示。
+3. 指令面板按场景串行写入，间隔至少 6500ms；某场景失败不阻断其他场景，结果按场景聚合为成功 /
+   失败 / partial。Private Menu 成功而某个场景失败时按 surface 返回部分结果，只更新成功
+   surface 的 Published Revision。
 4. Private Menu 通过 `setMenu` 整体覆盖写入；失败时保留 Draft 与旧 Published Revision。
 
 ### 刷新与 Drift

@@ -1,6 +1,6 @@
 import { message, messageBox, store } from '@koishijs/client'
 import { defineComponent, h, onBeforeUnmount, onMounted, reactive, resolveComponent } from 'vue'
-import { emptyPanelConfiguration, PANEL_SCOPES, PANEL_SCOPE_LABELS, type BotInstanceSummary, type CommandPanelCandidate, type CommandPanelPublishResult, type CommandPanelScopeCandidates, type DraftRevisionConflict, type DriftReport, type DriftState, type MenuItemDiff, type PanelConfiguration, type PanelScope, type PrivateMenuPublishResult, type ValidationIssue, type WorkspaceSnapshot } from '../src/types'
+import { emptyPanelConfiguration, PANEL_SCOPES, PANEL_SCOPE_LABELS, type BotInstanceSummary, type CommandPanelCandidate, type CommandPanelPublishResult, type CommandPanelScopeCandidates, type DraftRevisionConflict, type DriftReport, type DriftState, type MenuItemDiff, type PanelConfiguration, type PanelScope, type PublishConfirmations, type PublishMenuFailure, type PublishMenuSuccess, type ValidationIssue, type WorkspaceSnapshot } from '../src/types'
 import { validatePanelConfiguration } from '../src/validation'
 import * as api from './api'
 import { PrivateMenuEditor } from './private-editor'
@@ -352,6 +352,8 @@ export default defineComponent({
         state.pendingCleanupPanelIds = {}
         state.cleanupFailures = {}
         state.cleaningUp = false
+        // 打开／切换 Bot Instance 时同步读取 Platform State，Drift 提示不需要手动刷新才出现。
+        await refreshPlatform()
       } catch (error) {
         state.status = 'failed'
         state.error = errorMessage(error)
@@ -615,124 +617,143 @@ export default defineComponent({
       }
     }
 
-    const publishCommandPanel = async (
-      cleanupPanelIds?: Partial<Record<PanelScope, string[]>>,
-      warningsConfirmed = false,
-      driftConfirmations?: { scopes?: Partial<Record<PanelScope, boolean>> },
-    ): Promise<void> => {
+    /** 统一的「继续吗」确认框；用户取消时返回 false。 */
+    const confirmContinue = async (text: string, title: string, confirmText: string): Promise<boolean> => {
+      try {
+        await messageBox.confirm(text, title, { type: 'warning', confirmButtonText: confirmText, cancelButtonText: '取消' })
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    /** 警告确认框文案。 */
+    const warningText = (warnings: ValidationIssue[]) =>
+      `存在 ${warnings.length} 条警告：\n${warnings.slice(0, 6).map(issue => `· ${issue.message}`).join('\n')}\n\n仍要发布吗？`
+
+    /** 指令面板发布成功后的结果展示；保留 partial 的待清理状态。 */
+    const applyCommandPanelSuccess = (result: CommandPanelPublishResult) => {
+      if (!result.ok) return
+      const panels = Object.values(result.published).filter(panel => panel !== undefined)
+      const pending = panels.reduce((sum, panel) => sum + panel.cleanup.panelIds.length, 0)
+      const failedScopes = result.scopeResults.filter(scope => scope.status === 'failed')
+      const successfulScopes = result.scopeResults.filter(scope => scope.status !== 'failed')
+      if (result.status === 'partial') message.warning('指令面板部分发布')
+      else message.success('指令面板已发布')
+      state.pendingCleanupPanelIds = result.ignoredCleanupPanelIds
+      state.cleanupFailures = result.cleanupFailures
+      state.publishMessage = result.status === 'partial'
+        ? `${[
+          successfulScopes.length ? `已写入 ${successfulScopes.length} 个场景` : '',
+          failedScopes.length ? `失败场景：${failedScopes.map(item => PANEL_SCOPE_LABELS[item.scope]).join('、')}` : '',
+          pending ? `仍有 ${pending} 个面板待清理` : '',
+        ].filter(Boolean).join('；')}。`
+        : `指令面板已发布到 ${panels.length} 个使用场景。`
+      state.publishIssues = [
+        ...result.warnings,
+        ...failedScopes.map(scope => ({
+          severity: 'error' as const,
+          code: `command-panel.publish-${scope.code ?? 'failed'}`,
+          path: `commandPanel.scopes.${scope.scope}`,
+          message: `${PANEL_SCOPE_LABELS[scope.scope]} 场景发布失败：${scope.message ?? '未知错误'}`,
+        })),
+      ]
+    }
+
+    /**
+     * Publish 指令面板：清理重试与单 surface 路径。确认码用循环处理，而不是递归重入——
+     * 递归会在 state.publishing 尚未复位时被入口守卫挡下，导致确认后静默不发布。
+     */
+    const publishCommandPanel = async (cleanupPanelIds?: Partial<Record<PanelScope, string[]>>): Promise<void> => {
       if (!state.activeAppId || state.publishing) return
       if (state.jsonError) {
         state.error = `配置文本解析失败：${state.jsonError}`
         return
       }
-      if (isDirty() || state.status !== 'saved') {
-        await save()
-      }
+      if (isDirty() || state.status !== 'saved') await save()
       if (isDirty() || state.status === 'failed') return
 
-      const commandValidation = validatePanelConfiguration(state.configuration)
-      const commandErrors = commandValidation.errors.filter(issue => issue.path.startsWith('commandPanel'))
-      if (commandErrors.length) {
-        state.publishIssues = commandErrors
-        state.publishMessage = `发布被阻止：指令面板有 ${commandErrors.length} 个硬错误。`
+      const validation = validatePanelConfiguration(state.configuration)
+      if (validation.errors.length) {
+        state.publishIssues = validation.errors
+        state.publishMessage = `发布被阻止：指令面板有 ${validation.errors.length} 个硬错误。`
         return
       }
-      const warnings = commandValidation.warnings.filter(issue => issue.path.startsWith('commandPanel'))
-      if (warnings.length && !warningsConfirmed) {
-        try {
-          await messageBox.confirm(
-            `存在 ${warnings.length} 条警告：\n${warnings.slice(0, 6).map(issue => `· ${issue.message}`).join('\n')}\n\n仍要发布吗？`,
-            '发布确认',
-            { type: 'warning', confirmButtonText: '发布', cancelButtonText: '取消' },
-          )
-        } catch {
-          return
-        }
-      }
 
+      let confirmWarnings = false
+      let confirmDrift: PublishConfirmations | undefined
+      let confirmedCleanup = cleanupPanelIds
       state.publishing = true
       state.publishMessage = ''
       state.publishIssues = []
       try {
-        const result: CommandPanelPublishResult = await api.publishCommandPanel({
-          appId: state.activeAppId,
-          expectedRevision: state.revision,
-          cleanupPanelIds,
-          confirmDrift: driftConfirmations,
-        })
-        if (result.ok) {
-          const panels = Object.values(result.published).filter(panel => panel !== undefined)
-          const pending = panels.reduce((sum, panel) => sum + panel.cleanup.panelIds.length, 0)
-          const failedScopes = result.scopeResults.filter(scope => scope.status === 'failed')
-          const successfulScopes = result.scopeResults.filter(scope => scope.status !== 'failed')
-          if (result.status === 'partial') message.warning('指令面板部分发布')
-          else message.success('指令面板已发布')
-          await loadWorkspace(state.activeAppId)
-          state.pendingCleanupPanelIds = result.ignoredCleanupPanelIds
-          state.cleanupFailures = result.cleanupFailures
-          if (result.status === 'partial') {
-            const details = [
-              successfulScopes.length ? `已写入 ${successfulScopes.length} 个场景` : '',
-              failedScopes.length ? `失败场景：${failedScopes.map(item => PANEL_SCOPE_LABELS[item.scope]).join('、')}` : '',
-              pending ? `仍有 ${pending} 个面板待清理` : '',
-            ].filter(Boolean)
-            state.publishMessage = `${details.join('；')}。`
-          } else {
-            state.publishMessage = `指令面板已发布到 ${panels.length} 个使用场景。`
+        for (let round = 0; ; round++) {
+          const result = await api.publishCommandPanel({
+            appId: state.activeAppId,
+            expectedRevision: state.revision,
+            cleanupPanelIds: confirmedCleanup,
+            confirmDrift,
+            confirmWarnings,
+          })
+          if (result.ok) {
+            await loadWorkspace(state.activeAppId)
+            applyCommandPanelSuccess(result)
+            break
           }
-          state.publishIssues = [
-            ...result.warnings,
-            ...failedScopes.map(scope => ({
-              severity: 'error' as const,
-              code: `command-panel.publish-${scope.code ?? 'failed'}`,
-              path: `commandPanel.scopes.${scope.scope}`,
-              message: `${PANEL_SCOPE_LABELS[scope.scope]} 场景发布失败：${scope.message ?? '未知错误'}`,
-            })),
-          ]
-        } else if (result.code === 'cleanup-confirmation-required') {
-          state.publishing = false
-          let confirmed = false
-          try {
-            await messageBox.confirm(
-              `发布前需要删除以下其他通用指令面板：\n\n${formatCleanupCandidates(result.candidates)}\n\n删除后无法从本页面恢复，是否继续？`,
-              '确认清理其他指令面板',
-              { type: 'warning', confirmButtonText: '确认删除并发布', cancelButtonText: '取消' },
-            )
-            confirmed = true
-          } catch {
-            confirmed = false
+          if (round >= 3) {
+            state.publishMessage = '平台状态持续变化，已停止发布，请刷新后重试。'
+            break
           }
-          if (confirmed) {
+          if (result.code === 'warning-confirmation-required') {
+            if (!await confirmContinue(warningText(result.warnings ?? []), '发布确认', '发布')) {
+              state.publishMessage = '已取消发布，草稿未变更。'
+              break
+            }
+            confirmWarnings = true
+            continue
+          }
+          if (result.code === 'cleanup-confirmation-required') {
             const ids: Partial<Record<PanelScope, string[]>> = {}
             for (const group of result.candidates) ids[group.scope] = group.candidates.map(candidate => candidate.panelId)
-            return publishCommandPanel(ids, true)
+            if (!await confirmContinue(
+              `发布前需要删除以下其他通用指令面板：\n\n${formatCleanupCandidates(result.candidates)}\n\n删除后无法从本页面恢复，是否继续？`,
+              '确认清理其他指令面板',
+              '确认删除并发布',
+            )) {
+              state.publishMessage = '已取消清理，草稿未发布。'
+              break
+            }
+            confirmedCleanup = ids
+            continue
           }
-          state.publishMessage = '已取消清理，草稿未发布。'
-        } else if (result.code === 'drift-confirmation-required' && result.drift) {
-          const changedScopes = result.drift.scopes.filter(scope => scope.state === 'changed' || scope.state === 'missing')
-          try {
-            await messageBox.confirm(
+          if (result.code === 'drift-confirmation-required' && result.drift) {
+            if (!await confirmContinue(
               `${formatDriftSummary(result.drift)}\n\n平台内容与上次发布不一致，继续发布会覆盖平台现状。`,
               '确认覆盖平台 Drift',
-              { type: 'warning', confirmButtonText: '覆盖并发布', cancelButtonText: '取消' },
-            )
-          } catch {
-            state.publishMessage = '已取消发布，草稿未变更。'
-            return
+              '覆盖并发布',
+            )) {
+              state.publishMessage = '已取消发布，草稿未变更。'
+              break
+            }
+            const scopes: Partial<Record<PanelScope, boolean>> = {}
+            for (const scope of result.drift.scopes) {
+              if (scope.state === 'changed' || scope.state === 'missing') scopes[scope.scope] = true
+            }
+            confirmDrift = { scopes }
+            continue
           }
-          const confirmations: Partial<Record<PanelScope, boolean>> = {}
-          for (const scope of changedScopes) confirmations[scope.scope] = true
-          return publishCommandPanel(cleanupPanelIds, warningsConfirmed, { scopes: confirmations })
-        } else if (result.code === 'revision-conflict') {
-          applyConflict({ ok: false, reason: 'revision-conflict', revision: result.revision, draft: result.draft })
-          state.publishMessage = result.message
-        } else if (result.code === 'validation-failed') {
-          state.publishIssues = result.errors
-          state.publishMessage = result.message
-        } else if (result.code === 'quantity-limit') {
-          state.publishMessage = '发布失败：QQ 平台返回条目数量超限（40030013），草稿与上次成功发布的版本已保留。'
-        } else {
-          state.publishMessage = `发布失败：${result.message}`
+          if (result.code === 'revision-conflict') {
+            applyConflict({ ok: false, reason: 'revision-conflict', revision: result.revision, draft: result.draft })
+            state.publishMessage = result.message
+          } else if (result.code === 'validation-failed') {
+            state.publishIssues = result.errors
+            state.publishMessage = result.message
+          } else if (result.code === 'quantity-limit') {
+            state.publishMessage = '发布失败：QQ 平台返回条目数量超限（40030013），草稿与上次成功发布的版本已保留。'
+          } else {
+            state.publishMessage = `发布失败：${result.message}`
+          }
+          break
         }
       } catch (error) {
         state.publishMessage = `发布失败：${errorMessage(error)}`
@@ -754,7 +775,7 @@ export default defineComponent({
       if (!hasPending) return
       state.cleaningUp = true
       try {
-        await publishCommandPanel(ids, true)
+        await publishCommandPanel(ids)
       } finally {
         state.cleaningUp = false
       }
@@ -762,74 +783,133 @@ export default defineComponent({
 
     const localValidation = () => validatePanelConfiguration(state.configuration)
 
-    let privateDriftConfirmed = false
+    /** Publish 确认框文案：按硬错误、警告、按场景 Drift、按场景待删除面板分区展示。 */
+    const formatPublishConfirmation = (result: PublishMenuFailure): string => {
+      const sections: string[] = []
+      if (result.errors.length > 0) {
+        sections.push(`【硬错误 ${result.errors.length}】\n${result.errors.slice(0, 8).map(issue => `· ${issue.message}`).join('\n')}`)
+      }
+      if (result.warnings.length > 0) {
+        sections.push(`【警告 ${result.warnings.length}】\n${result.warnings.slice(0, 8).map(issue => `· ${issue.message}`).join('\n')}`)
+      }
+      if (result.drift) sections.push(`【Drift】\n${formatDriftSummary(result.drift)}`)
+      if (result.cleanup && result.cleanup.length > 0) {
+        sections.push(`【待删除面板】\n${formatCleanupCandidates(result.cleanup)}`)
+      }
+      return sections.length > 0 ? sections.join('\n\n') : '平台状态与上次发布一致。'
+    }
 
-    const publishPrivateMenu = async () => {
+    /** 统一 Publish 成功后按 surface 分别展示结果。 */
+    const applyPublishMenuSuccess = (result: PublishMenuSuccess) => {
+      const summaries: string[] = []
+      const issues: ValidationIssue[] = []
+
+      if (result.privateMenu.ok) {
+        summaries.push(`私聊菜单已发布（平台版本 ${result.privateMenu.published.version ?? '未知'}）`)
+        issues.push(...result.privateMenu.warnings)
+      } else {
+        summaries.push(`私聊菜单发布失败：${result.privateMenu.message}`)
+        issues.push(...result.privateMenu.errors)
+      }
+
+      if (result.commandPanel.ok) {
+        const panels = Object.values(result.commandPanel.published).filter(panel => panel !== undefined)
+        const pending = panels.reduce((sum, panel) => sum + panel.cleanup.panelIds.length, 0)
+        const failedScopes = result.commandPanel.scopeResults.filter(scope => scope.status === 'failed')
+        summaries.push(result.commandPanel.status === 'partial'
+          ? `指令面板部分发布${pending ? `，仍有 ${pending} 个面板待清理` : ''}`
+          : `指令面板已发布到 ${panels.length} 个使用场景`)
+        issues.push(...result.commandPanel.warnings)
+        issues.push(...failedScopes.map(scope => ({
+          severity: 'error' as const,
+          code: `command-panel.publish-${scope.code ?? 'failed'}`,
+          path: `commandPanel.scopes.${scope.scope}`,
+          message: `${PANEL_SCOPE_LABELS[scope.scope]} 场景发布失败：${scope.message ?? '未知错误'}`,
+        })))
+        state.pendingCleanupPanelIds = result.commandPanel.ignoredCleanupPanelIds
+        state.cleanupFailures = result.commandPanel.cleanupFailures
+      } else {
+        summaries.push(`指令面板发布失败：${result.commandPanel.message}`)
+        issues.push(...result.commandPanel.errors)
+      }
+
+      state.publishMessage = `${summaries.join('；')}。`
+      state.publishIssues = issues
+      if (result.status === 'partial') message.warning('部分 surface 发布未成功')
+      else message.success('菜单已发布')
+    }
+
+    /**
+     * 统一 Publish：一个服务端入口编排 Private Menu 与四个场景的 Command Panel；
+     * 确认框按硬错误、警告、按场景 Drift 与待删除面板分区展示，确认后再写入平台。
+     */
+    const publishAll = async (): Promise<void> => {
       if (!state.activeAppId || state.publishing) return
       if (state.jsonError) {
         state.error = `配置文本解析失败：${state.jsonError}`
         return
       }
-      if (isDirty() || state.status !== 'saved') {
-        await save()
-      }
+      if (isDirty() || state.status !== 'saved') await save()
       if (isDirty() || state.status === 'failed') return
 
-      const privateValidation = validatePanelConfiguration(state.configuration)
-      const privateErrors = privateValidation.errors.filter(issue => issue.path.startsWith('privateMenu'))
-      if (privateErrors.length) {
-        state.publishIssues = privateErrors
-        state.publishMessage = `发布被阻止：私聊菜单有 ${privateErrors.length} 个硬错误。`
+      const validation = validatePanelConfiguration(state.configuration)
+      if (validation.errors.length) {
+        state.publishIssues = validation.errors
+        state.publishMessage = `发布被阻止：共 ${validation.errors.length} 个硬错误。`
         return
       }
-      const warnings = privateValidation.warnings.filter(issue => issue.path.startsWith('privateMenu'))
-      if (warnings.length) {
-        try {
-          await messageBox.confirm(
-            `存在 ${warnings.length} 条警告：\n${warnings.slice(0, 6).map(issue => `· ${issue.message}`).join('\n')}\n\n仍要发布吗？`,
-            '发布确认',
-            { type: 'warning', confirmButtonText: '发布', cancelButtonText: '取消' },
-          )
-        } catch {
-          return
-        }
-      }
 
+      let confirmWarnings = false
+      let confirmDrift: PublishConfirmations | undefined
+      let cleanupPanelIds: Partial<Record<PanelScope, string[]>> | undefined
       state.publishing = true
       state.publishMessage = ''
       state.publishIssues = []
       try {
-        const result: PrivateMenuPublishResult = await api.publishPrivateMenu({
-          appId: state.activeAppId,
-          expectedRevision: state.revision,
-          confirmDrift: privateDriftConfirmed ? { privateMenu: true } : undefined,
-        })
-        if (result.ok) {
-          message.success('私聊菜单已发布')
-          await loadWorkspace(state.activeAppId)
-          state.publishMessage = `私聊菜单发布成功（平台版本 ${result.published.version ?? '未知'}）。`
-          state.publishIssues = result.warnings
-        } else if (result.code === 'revision-conflict') {
-          applyConflict({ ok: false, reason: 'revision-conflict', revision: result.revision, draft: result.draft })
-          state.publishMessage = result.message
-        } else if (result.code === 'drift-confirmation-required' && result.drift) {
-          try {
-            await messageBox.confirm(
-              `${formatDriftSummary(result.drift)}\n\n平台内容与上次发布不一致，继续发布会覆盖平台现状。`,
-              '确认覆盖平台 Drift',
-              { type: 'warning', confirmButtonText: '覆盖并发布', cancelButtonText: '取消' },
-            )
-          } catch {
-            state.publishMessage = '已取消发布，草稿未变更。'
-            return
+        for (let round = 0; ; round++) {
+          const result = await api.publishMenu({
+            appId: state.activeAppId,
+            expectedRevision: state.revision,
+            confirmWarnings,
+            confirmDrift,
+            cleanupPanelIds,
+          })
+          if (result.ok) {
+            await loadWorkspace(state.activeAppId)
+            applyPublishMenuSuccess(result)
+            break
           }
-          privateDriftConfirmed = true
-          return publishPrivateMenu()
-        } else if (result.code === 'validation-failed') {
-          state.publishIssues = result.errors
-          state.publishMessage = result.message
-        } else {
-          state.publishMessage = `发布失败：${result.message}`
+          if (result.code === 'validation-failed') {
+            state.publishIssues = result.errors
+            state.publishMessage = result.message
+            break
+          }
+          if (result.code === 'revision-conflict') {
+            applyConflict({ ok: false, reason: 'revision-conflict', revision: result.revision, draft: result.draft })
+            state.publishMessage = result.message
+            break
+          }
+          if (result.code !== 'confirmation-required') {
+            state.publishMessage = `发布失败：${result.message}`
+            break
+          }
+          if (round >= 3) {
+            state.publishMessage = '平台状态持续变化，已停止发布，请刷新后重试。'
+            break
+          }
+          if (!await confirmContinue(formatPublishConfirmation(result), 'Publish 确认', '确认并发布')) {
+            state.publishMessage = '已取消发布，草稿未变更。'
+            break
+          }
+          confirmWarnings = true
+          const scopes: Partial<Record<PanelScope, boolean>> = {}
+          for (const scope of result.drift?.scopes ?? []) {
+            if (scope.state === 'changed' || scope.state === 'missing') scopes[scope.scope] = true
+          }
+          confirmDrift = { privateMenu: true, scopes }
+          const ids: Partial<Record<PanelScope, string[]>> = {}
+          for (const group of result.cleanup ?? []) ids[group.scope] = group.candidates.map(candidate => candidate.panelId)
+          cleanupPanelIds = Object.keys(ids).length > 0 ? ids : undefined
         }
       } catch (error) {
         state.publishMessage = `发布失败：${errorMessage(error)}`
@@ -837,7 +917,6 @@ export default defineComponent({
         state.publishing = false
       }
     }
-
     const init = async () => {
       state.loading = true
       try {
@@ -897,7 +976,7 @@ export default defineComponent({
         type: 'button',
         class: 'me-button me-primary',
         disabled: state.loading || state.publishing || !state.activeAppId,
-        onClick: () => void (state.tab === 'command' ? publishCommandPanel() : publishPrivateMenu()),
+        onClick: () => void publishAll(),
       }, state.publishing ? '发布中…' : '发布'),
     ])
 

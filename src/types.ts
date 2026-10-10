@@ -291,7 +291,6 @@ export interface ImportPrivateMenuFailure {
 
 export type ImportPrivateMenuResult = ImportPrivateMenuSuccess | ImportPrivateMenuFailure
 
-/** Publish 目前只发布 Private Menu；Command Panel 写入走独立入口。 */
 export const PUBLISH_PRIVATE_MENU_SURFACE = 'privateMenu' as const
 
 export interface PrivateMenuPublishInput {
@@ -299,6 +298,8 @@ export interface PrivateMenuPublishInput {
   expectedRevision: number
   /** Drift 确认；存在 Drift 时必须显式确认才允许覆盖平台现状。 */
   confirmDrift?: PublishConfirmations
+  /** 警告确认；存在警告时必须显式确认才允许写入平台。 */
+  confirmWarnings?: boolean
 }
 
 /** Publish 确认：键存在且为 true 表示用户已确认对应类别的差异。 */
@@ -322,6 +323,7 @@ export type PrivateMenuPublishFailureCode =
   | 'revision-conflict'
   | 'validation-failed'
   | 'drift-confirmation-required'
+  | 'warning-confirmation-required'
   | 'platform-error'
 
 export interface PrivateMenuPublishFailure {
@@ -330,6 +332,8 @@ export interface PrivateMenuPublishFailure {
   code: PrivateMenuPublishFailureCode
   message: string
   errors: ValidationIssue[]
+  /** 仅 warning-confirmation-required 时携带待用户确认的警告。 */
+  warnings?: ValidationIssue[]
   /** 失败时回传服务端当前 revision 与 Draft，便于 UI 重载或强制覆盖。 */
   revision: number
   draft: PanelConfiguration
@@ -436,6 +440,8 @@ export interface CommandPanelPublishInput {
   cleanupPanelIds?: Partial<Record<PanelScope, string[]>>
   /** Drift 确认；存在 Drift 时必须显式确认才允许写入。 */
   confirmDrift?: PublishConfirmations
+  /** 警告确认；存在警告时必须显式确认才允许写入平台。 */
+  confirmWarnings?: boolean
 }
 
 export type CommandPanelPublishFailureCode =
@@ -447,6 +453,7 @@ export type CommandPanelPublishFailureCode =
   | 'platform-error'
   | 'quantity-limit'
   | 'cleanup-confirmation-required'
+  | 'warning-confirmation-required'
 
 export interface CommandPanelPublishSuccess {
   ok: true
@@ -471,6 +478,8 @@ export interface CommandPanelPublishFailure {
   code: CommandPanelPublishFailureCode
   message: string
   errors: ValidationIssue[]
+  /** 仅 warning-confirmation-required 时携带待用户确认的警告。 */
+  warnings?: ValidationIssue[]
   /** 失败时回传服务端当前 revision 与 Draft，便于 UI 重载或强制覆盖。 */
   revision: number
   draft: PanelConfiguration
@@ -482,3 +491,55 @@ export interface CommandPanelPublishFailure {
 }
 
 export type CommandPanelPublishResult = CommandPanelPublishSuccess | CommandPanelPublishFailure
+
+// ---------------------------------------------------------------------------
+// 统一 Publish：一个服务端入口编排 Private Menu 与四个使用场景的 Command Panel。
+// ---------------------------------------------------------------------------
+
+/** 统一 Publish 请求；两类 surface 分别写入、分别返回结果，不假装存在跨平台事务。 */
+export interface PublishMenuInput {
+  appId: string
+  expectedRevision: number
+  /** 警告确认；存在警告时必须显式确认才允许写入平台。 */
+  confirmWarnings?: boolean
+  /** Drift 确认；Private Menu 与各使用场景分别确认。 */
+  confirmDrift?: PublishConfirmations
+  /** 用户已确认删除的按场景待清理面板 ID。 */
+  cleanupPanelIds?: Partial<Record<PanelScope, string[]>>
+}
+
+export type PublishMenuFailureCode =
+  | 'unknown-bot'
+  | 'bot-offline'
+  | 'revision-conflict'
+  | 'validation-failed'
+  | 'confirmation-required'
+  | 'platform-error'
+
+/** 统一 Publish 被前置检查拦下；confirmation-required 时按分区回传待确认内容。 */
+export interface PublishMenuFailure {
+  ok: false
+  code: PublishMenuFailureCode
+  message: string
+  revision: number
+  draft: PanelConfiguration
+  /** 两类 surface 合并的硬错误；非空时 Publish 被阻止。 */
+  errors: ValidationIssue[]
+  /** 两类 surface 合并的警告。 */
+  warnings: ValidationIssue[]
+  /** 需要用户确认的 Drift 快照；平台读取失败时不携带。 */
+  drift?: DriftReport
+  /** 需要用户确认删除的按场景待清理面板。 */
+  cleanup?: CommandPanelScopeCandidates[]
+}
+
+export interface PublishMenuSuccess {
+  ok: true
+  /** 两类 surface 都成功且无待清理为 published；任一部分失败或仍有待清理为 partial。 */
+  status: 'published' | 'partial'
+  revision: number
+  privateMenu: PrivateMenuPublishResult
+  commandPanel: CommandPanelPublishResult
+}
+
+export type PublishMenuResult = PublishMenuSuccess | PublishMenuFailure

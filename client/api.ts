@@ -13,6 +13,8 @@ import type {
   ImportPrivateMenuResult,
   PrivateMenuPublishInput,
   PrivateMenuPublishResult,
+  PublishMenuInput,
+  PublishMenuResult,
   SaveDraftInput,
   WorkspaceSnapshot,
 } from '../src/types'
@@ -58,3 +60,5 @@ export const importCommandPanel = (input: ImportCommandPanelInput) =>
   send<ImportCommandPanelResult>('menu-edit/import-command-panel', input)
 export const publishCommandPanel = (input: CommandPanelPublishInput) =>
   send<CommandPanelPublishResult>('menu-edit/publish-command-panel', input)
+export const publishMenu = (input: PublishMenuInput) =>
+  send<PublishMenuResult>('menu-edit/publish', input)

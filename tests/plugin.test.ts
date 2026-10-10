@@ -38,6 +38,7 @@ describe('插件入口', () => {
         'menu-edit/publish-private-menu',
         'menu-edit/import-command-panel',
         'menu-edit/publish-command-panel',
+      'menu-edit/publish',
       ])
       assert.equal(entries, 1)
     } finally {

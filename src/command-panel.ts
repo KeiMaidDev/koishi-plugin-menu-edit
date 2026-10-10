@@ -81,6 +81,23 @@ export function deriveScopePanel(panel: CommandPanelConfiguration, scope: PanelS
 }
 
 /**
+ * 收集各场景面板里除 `items` / `remark` 之外的未知字段，供 Draft 的 `scopeExtras` 原样保留。
+ * 导入与从 Published Revision 回填共用同一规则；没有任何未知字段时返回 undefined。
+ */
+export function collectScopeExtras(
+  sources: { scope: PanelScope; panel: CommandPanelConfiguration }[],
+): CommandPanelConfiguration['scopeExtras'] | undefined {
+  const scopeExtras: NonNullable<CommandPanelConfiguration['scopeExtras']> = {}
+  for (const { scope, panel } of sources) {
+    const extras: JsonRecord = { ...panel }
+    delete extras.items
+    delete extras.remark
+    if (Object.keys(extras).length) scopeExtras[scope] = extras
+  }
+  return Object.keys(scopeExtras).length ? scopeExtras : undefined
+}
+
+/**
  * 导入合并用的条目指纹：`name` 加 `desc` / `only_admin` / `link` 归一后的完全一致判定。
  * 同名但指纹不同的条目不会被合并。
  */

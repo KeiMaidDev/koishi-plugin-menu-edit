@@ -4,7 +4,7 @@
  * 这些规则被 saveDraft 与 discardDraft 共用，放在状态模型旁边，避免 MenuService
  * 里出现两份 read-modify-write 骨架。
  */
-import { mergePanelItems, type JsonRecord } from './command-panel'
+import { collectScopeExtras, mergePanelItems } from './command-panel'
 import {
   deepClone,
   emptyCommandPanel,
@@ -42,18 +42,12 @@ export function commandPanelFromPublished(published: PublishedCommandPanels): Co
   if (!sources.length) return null
 
   const merged = mergePanelItems(sources)
-  const scopeExtras: NonNullable<CommandPanelConfiguration['scopeExtras']> = {}
-  for (const { scope, panel } of sources) {
-    const extras: JsonRecord = { ...panel }
-    delete extras.items
-    delete extras.remark
-    if (Object.keys(extras).length) scopeExtras[scope] = extras
-  }
+  const scopeExtras = collectScopeExtras(sources)
   const first = sources[0].panel
   return {
     remark: typeof first.remark === 'string' ? first.remark : 'menu-edit',
     items: merged.items,
-    ...(Object.keys(scopeExtras).length ? { scopeExtras } : {}),
+    ...(scopeExtras ? { scopeExtras } : {}),
   }
 }
 

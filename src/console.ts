@@ -24,6 +24,8 @@ import type {
   ImportPrivateMenuResult,
   PrivateMenuPublishInput,
   PrivateMenuPublishResult,
+  PublishMenuInput,
+  PublishMenuResult,
   SaveDraftInput,
   WorkspaceSnapshot,
 } from './types'
@@ -39,6 +41,7 @@ declare module '@koishijs/console' {
     'menu-edit/publish-private-menu'(input: PrivateMenuPublishInput): Promise<PrivateMenuPublishResult>
     'menu-edit/import-command-panel'(input: ImportCommandPanelInput): Promise<ImportCommandPanelResult>
     'menu-edit/publish-command-panel'(input: CommandPanelPublishInput): Promise<CommandPanelPublishResult>
+    'menu-edit/publish'(input: PublishMenuInput): Promise<PublishMenuResult>
   }
 }
 
@@ -122,6 +125,9 @@ export const setupConsole = Object.assign(
 
     ctx.console.addListener(`${CONSOLE_API_PREFIX}/publish-command-panel`, (input) =>
       run('Publish Command Panel', () => service.publishCommandPanel(input as CommandPanelPublishInput)), requireAuthority)
+
+    ctx.console.addListener(`${CONSOLE_API_PREFIX}/publish`, (input) =>
+      run('Publish', () => service.publishMenu(input as PublishMenuInput)), requireAuthority)
 
     ctx.console.addEntry(resolveConsoleEntry(ctx))
   },

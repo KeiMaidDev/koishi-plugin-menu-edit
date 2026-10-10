@@ -53,6 +53,7 @@ describe('Menu Edit Console：权限与入口', () => {
       'menu-edit/publish-private-menu',
       'menu-edit/import-command-panel',
       'menu-edit/publish-command-panel',
+      'menu-edit/publish',
     ])
     for (const item of captured) assert.equal(item.authority, 4, `${item.event} 必须要求 authority 4`)
     assert.equal(entries.length, 1, '必须注册客户端 entry')
