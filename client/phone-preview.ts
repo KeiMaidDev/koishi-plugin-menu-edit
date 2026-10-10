@@ -6,7 +6,7 @@
  * Menu Sheet。所有点击只改变预览态，不修改 Draft、不发送消息、不打开链接、
  * 不切换真实开关。
  */
-import { defineComponent, h, reactive, ref } from 'vue'
+import { defineComponent, h, reactive, ref, watch } from 'vue'
 import { iconFor, labelFor } from './icons'
 import { itemName, itemType, subItems, switchConfigOf } from './private-menu'
 
@@ -33,6 +33,10 @@ export const PrivateMenuPreview = defineComponent({
       if (key in switchState) return switchState[key]
       return switchConfigOf(item).default
     }
+
+    watch(() => props.items, () => {
+      for (const key of Object.keys(switchState)) delete switchState[key]
+    }, { deep: true })
 
     const flash = (token: number) => {
       flashIndex.value = token
