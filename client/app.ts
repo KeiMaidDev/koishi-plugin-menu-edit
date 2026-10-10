@@ -166,11 +166,8 @@ const PANEL_STYLE = `
 .me-switch-dot.me-on { background: #204ca5; }
 .me-strip-btn.me-switch-off { color: #908f94; }
 .me-strip-btn.me-switch-on { border-color: #e5edf8; background: #e5edf8; color: #204ca5; }
-.me-chat-input-row { display: flex; align-items: center; gap: 11px; padding: 0 6px 13px; }
-.me-chat-input { flex: 1; height: 33px; border-radius: 17px; background: #fff; }
-.me-chat-send { flex: none; display: flex; align-items: center; justify-content: center; width: 54px; height: 33px; border-radius: 17px; background: #7ac8f9; color: #fff; font-size: 12px; }
-.me-sheet-mask { position: absolute; left: 0; right: 0; top: 0; bottom: 46px; background: rgba(0,0,0,.4); }
-.me-sheet { position: absolute; left: 0; right: 0; bottom: 46px; max-height: calc(100% - 46px); overflow-y: auto; padding-bottom: 8px; border-radius: 7px 7px 0 0; background: #fff; color: #191919; }
+.me-sheet-mask { position: absolute; left: 0; right: 0; top: 0; bottom: 45px; background: rgba(0,0,0,.4); }
+.me-sheet { position: absolute; left: 0; right: 0; bottom: 45px; max-height: calc(100% - 45px); overflow-y: auto; padding-bottom: 8px; border-radius: 7px 7px 0 0; background: #fff; color: #191919; }
 .me-sheet-handle { width: 32px; height: 4px; margin: 4px auto 0; border-radius: 2px; background: #ccccce; cursor: pointer; }
 .me-sheet-head { display: flex; align-items: center; gap: 7px; height: 44px; padding: 0 14px; }
 .me-sheet-title { font-size: 13px; color: #191919; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

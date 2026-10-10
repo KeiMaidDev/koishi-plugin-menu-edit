@@ -146,9 +146,11 @@ export const PrivateMenuPreview = defineComponent({
           props.items.length
             ? h('div', { class: 'me-strip' }, props.items.map(renderStripButton))
             : h('div', { class: 'me-strip-empty' }, '暂无菜单项'),
-          h('div', { class: 'me-chat-input-row' }, [
-            h('div', { class: 'me-chat-input' }),
-            h('div', { class: 'me-chat-send' }, '发送'),
+          h('div', { class: 'me-cp-input-row' }, [
+            h('div', { class: 'me-cp-input' }, [
+              h('span', { class: 'me-cp-input-text' }, '/'),
+            ]),
+            h('div', { class: 'me-cp-send' }, '发送'),
           ]),
         ]),
       ]),
