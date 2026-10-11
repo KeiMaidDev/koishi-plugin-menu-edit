@@ -13,6 +13,10 @@ export interface Config {}
 
 export const Config: Schema<Config> = Schema.object({})
 
+export const usage = `
+注意：插件使用 [adapter-qq-crack](/market?keyword=adapter-qq-crack) 独有字段，需配合此适配器使用，若使用官方QQ适配器，可能会出现无法发布等问题
+`.trim()
+
 /**
  * 插件入口：组装按 AppID 隔离的 JSON 状态存储、QQ 平台边界和 MenuService，
  * 并把 Console 页面按需挂上。
