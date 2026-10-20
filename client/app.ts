@@ -241,9 +241,9 @@ const PANEL_STYLE = `
 .me-cp-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; height: 37px; padding: 0 12px; border-bottom: 1px solid #f0f0f0; }
 .me-cp-item:last-child { border-bottom: none; }
 .me-cp-title { display: flex; align-items: center; gap: 5px; min-width: 0; }
-.me-cp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; color: #111; }
+.me-cp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: #111; }
 .me-cp-admin { flex: none; padding: 0 5px; border-radius: 4px; background: #eef1f6; color: #5b6472; font-size: 10px; line-height: 15px; }
-.me-cp-desc { flex: none; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: #b8b8b8; text-align: right; }
+.me-cp-desc { flex: none; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: #b8b8b8; text-align: right; }
 .me-cp-chevron { flex: none; font-size: 22px; line-height: 1; color: #c4c4c4; }
 .me-cp-empty { display: flex; align-items: center; height: 37px; padding: 0 12px; font-size: 13px; color: #b8b8b8; }
 .me-cp-input-row { display: flex; flex: none; align-items: center; gap: 11px; padding: 0 12px 8px; }
