@@ -1,6 +1,7 @@
 # koishi-plugin-menu-edit
 
-[![npm](https://img.shields.io/npm/v/koishi-plugin-menu-edit?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-menu-edit)
+[![npm](https://img.shields.io/npm/v/koishi-plugin-menu-edit?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-menu-edit) ![NPM Downloads](https://img.shields.io/npm/dm/koishi-plugin-menu-edit?style=flat)
+
 
 > [!NOTE]
 > 本项目由 AI 工具参与开发，平台接口变化和边缘场景可能仍有问题；欢迎提交 Issue 或 PR。
